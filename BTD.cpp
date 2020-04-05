@@ -17,7 +17,7 @@
 
 #include "BTD.h"
 // To enable serial debugging see "settings.h"
-//#define EXTRADEBUG // Uncomment to get even more debugging data
+#define EXTRADEBUG // Uncomment to get even more debugging data
 
 const uint8_t BTD::BTD_CONTROL_PIPE = 0;
 const uint8_t BTD::BTD_EVENT_PIPE = 1;
@@ -27,6 +27,8 @@ const uint8_t BTD::BTD_DATAOUT_PIPE = 3;
 BTD::BTD(USB *p) :
 connectToWii(false),
 pairWithWii(false),
+connectToJoyCon(false),
+pairWithJoyCon(false),
 connectToHIDDevice(false),
 pairWithHIDDevice(false),
 pUsb(p), // Pointer to USB class instance - mandatory
@@ -313,6 +315,8 @@ void BTD::Initialize() {
 
         connectToWii = false;
         incomingWii = false;
+        connectToJoyCon = false;
+        incomingJoyCon = false;
         connectToHIDDevice = false;
         incomingHIDDevice = false;
         incomingPS4 = false;
@@ -400,7 +404,13 @@ void BTD::disconnect() {
 void BTD::HCI_event_task() {
         uint16_t length = BULK_MAXPKTSIZE; // Request more than 16 bytes anyway, the inTransfer routine will take care of this
         uint8_t rcode = pUsb->inTransfer(bAddress, epInfo[ BTD_EVENT_PIPE ].epAddr, &length, hcibuf, pollInterval); // Input on endpoint 1
-
+        if(length>0){
+        Notify(PSTR("\r\nHCI Event: "), 0x80);
+        for(uint8_t i = 0; i < length && i < 20; i++) {
+                D_PrintHex<uint8_t > (hcibuf[i], 0x80);
+                Notify(PSTR(" "), 0x80);
+        }
+      }
         if(!rcode || rcode == hrNAK) { // Check for errors
                 switch(hcibuf[0]) { // Switch on event type
                         case EV_COMMAND_COMPLETE:
@@ -427,16 +437,20 @@ void BTD::HCI_event_task() {
                                 break;
 
                         case EV_INQUIRY_COMPLETE:
-                                if(inquiry_counter >= 5 && (pairWithWii || pairWithHIDDevice)) {
+                                if(inquiry_counter >= 5 && (pairWithWii || pairWithJoyCon || pairWithHIDDevice)) {
                                         inquiry_counter = 0;
 #ifdef DEBUG_USB_HOST
                                         if(pairWithWii)
                                                 Notify(PSTR("\r\nCouldn't find Wiimote"), 0x80);
+                                        else if(pairWithJoyCon)
+                                                Notify(PSTR("\r\nCouldn't find Joy-Con"), 0x80);
                                         else
                                                 Notify(PSTR("\r\nCouldn't find HID device"), 0x80);
 #endif
                                         connectToWii = false;
                                         pairWithWii = false;
+                                        connectToJoyCon = false;
+                                        pairWithJoyCon = false;
                                         connectToHIDDevice = false;
                                         pairWithHIDDevice = false;
                                         hci_state = HCI_SCANNING_STATE;
@@ -465,7 +479,7 @@ void BTD::HCI_event_task() {
                                                 D_PrintHex<uint8_t > (classOfDevice[0], 0x80);
 #endif
 
-                                                if(pairWithWii && classOfDevice[2] == 0x00 && (classOfDevice[1] & 0x05) && (classOfDevice[0] & 0x0C)) { // See http://wiibrew.org/wiki/Wiimote#SDP_information
+                                                if((pairWithWii || pairWithJoyCon) && classOfDevice[2] == 0x00 && (classOfDevice[1] & 0x05) && (classOfDevice[0] & 0x0C)) { // See http://wiibrew.org/wiki/Wiimote#SDP_information
                                                         checkRemoteName = true; // Check remote name to distinguish between the different controllers
 
                                                         for(uint8_t j = 0; j < 6; j++)
@@ -565,6 +579,11 @@ void BTD::HCI_event_task() {
                                         Notify(PSTR("\r\nPairing with Wiimote"), 0x80);
 #endif
                                         hci_pin_code_request_reply();
+                                } else if(pairWithJoyCon) {
+#ifdef DEBUG_USB_HOST
+                                        Notify(PSTR("\r\nPairing with Joy-Con"), 0x80);
+#endif
+                                        hci_pin_code_request_reply();
                                 } else if(btdPin != NULL) {
 #ifdef DEBUG_USB_HOST
                                         Notify(PSTR("\r\nBluetooth pin is set too: "), 0x80);
@@ -593,6 +612,11 @@ void BTD::HCI_event_task() {
                                                 Notify(PSTR("\r\nPairing successful with Wiimote"), 0x80);
 #endif
                                                 connectToWii = true; // Used to indicate to the Wii service, that it should connect to this device
+                                        } else if(pairWithJoyCon && !connectToJoyCon) {
+#ifdef DEBUG_USB_HOST
+                                                Notify(PSTR("\r\nPairing successful with Joy-Con"), 0x80);
+#endif
+                                                connectToJoyCon = true; // Used to indicate to the Joy-Con service, that it should connect to this device
                                         } else if(pairWithHIDDevice && !connectToHIDDevice) {
 #ifdef DEBUG_USB_HOST
                                                 Notify(PSTR("\r\nPairing successful with HID device"), 0x80);
@@ -718,10 +742,12 @@ void BTD::HCI_task() {
                         break;
 
                 case HCI_CHECK_DEVICE_SERVICE:
-                        if(pairWithHIDDevice || pairWithWii) { // Check if it should try to connect to a Wiimote
+                        if(pairWithHIDDevice || pairWithWii || pairWithJoyCon) { // Check if it should try to connect to a Wiimote
 #ifdef DEBUG_USB_HOST
                                 if(pairWithWii)
                                         Notify(PSTR("\r\nStarting inquiry\r\nPress 1 & 2 on the Wiimote\r\nOr press the SYNC button if you are using a Wii U Pro Controller or a Wii Balance Board"), 0x80);
+                                else if(pairWithJoyCon)
+                                        Notify(PSTR("\r\nStarting inquiry\r\nPress the SYNC button on the Joy-Con"), 0x80);
                                 else
                                         Notify(PSTR("\r\nPlease enable discovery of your device"), 0x80);
 #endif
@@ -737,12 +763,16 @@ void BTD::HCI_task() {
 #ifdef DEBUG_USB_HOST
                                 if(pairWithWii)
                                         Notify(PSTR("\r\nWiimote found"), 0x80);
+                                else if(pairWithJoyCon)
+                                        Notify(PSTR("\r\nJoy-Con found"), 0x80);
                                 else
                                         Notify(PSTR("\r\nHID device found"), 0x80);
 
                                 Notify(PSTR("\r\nNow just create the instance like so:"), 0x80);
                                 if(pairWithWii)
                                         Notify(PSTR("\r\nWII Wii(&Btd);"), 0x80);
+                                else if(pairWithJoyCon)
+                                        Notify(PSTR("\r\nJOYCON JoyCon(&Btd);"), 0x80);
                                 else
                                         Notify(PSTR("\r\nBTHID bthid(&Btd);"), 0x80);
 
@@ -765,6 +795,8 @@ void BTD::HCI_task() {
 #ifdef DEBUG_USB_HOST
                                 if(pairWithWii)
                                         Notify(PSTR("\r\nConnecting to Wiimote"), 0x80);
+                                else if(pairWithJoyCon)
+                                        Notify(PSTR("\r\nConnecting to Joy-Con"), 0x80);
                                 else
                                         Notify(PSTR("\r\nConnecting to HID device"), 0x80);
 #endif
@@ -780,6 +812,8 @@ void BTD::HCI_task() {
 #ifdef DEBUG_USB_HOST
                                         if(pairWithWii)
                                                 Notify(PSTR("\r\nConnected to Wiimote"), 0x80);
+                                        else if(pairWithJoyCon)
+                                                Notify(PSTR("\r\nConnected to Joy-Con"), 0x80);
                                         else
                                                 Notify(PSTR("\r\nConnected to HID device"), 0x80);
 #endif
@@ -795,7 +829,7 @@ void BTD::HCI_task() {
                         break;
 
                 case HCI_SCANNING_STATE:
-                        if(!connectToWii && !pairWithWii && !connectToHIDDevice && !pairWithHIDDevice) {
+                        if(!connectToWii && !pairWithWii &&!connectToJoyCon && !pairWithJoyCon && !connectToHIDDevice && !pairWithHIDDevice) {
 #ifdef DEBUG_USB_HOST
                                 Notify(PSTR("\r\nWait For Incoming Connection Request"), 0x80);
 #endif
@@ -848,6 +882,11 @@ void BTD::HCI_task() {
 #endif
                                                 pairWiiUsingSync = true;
                                         }
+                                } else if(strncmp((const char*)remote_name, "Joy-Con", 7) == 0) {
+#ifdef DEBUG_USB_HOST
+                                  Notify(PSTR("\r\nJoy-Con is connecting"), 0x80);
+#endif
+                                  incomingJoyCon = true;
                                 }
                                 if(classOfDevice[2] == 0 && classOfDevice[1] == 0x25 && classOfDevice[0] == 0x08 && strncmp((const char*)remote_name, "Wireless Controller", 19) == 0) {
 #ifdef DEBUG_USB_HOST
@@ -855,7 +894,7 @@ void BTD::HCI_task() {
 #endif
                                         incomingPS4 = true;
                                 }
-                                if(pairWithWii && checkRemoteName)
+                                if((pairWithWii || pairWithJoyCon) && checkRemoteName)
                                         hci_state = HCI_CONNECT_DEVICE_STATE;
                                 else {
                                         hci_accept_connection();
@@ -907,6 +946,7 @@ void BTD::HCI_task() {
                                 memset(l2capinbuf, 0, BULK_MAXPKTSIZE);
 
                                 connectToWii = incomingWii = pairWithWii = false;
+                                connectToJoyCon = incomingJoyCon = pairWithJoyCon = false;
                                 connectToHIDDevice = incomingHIDDevice = pairWithHIDDevice = checkRemoteName = false;
                                 incomingPS4 = false;
 
@@ -946,6 +986,11 @@ void BTD::ACL_event_task() {
 
 /************************************************************/
 void BTD::HCI_Command(uint8_t* data, uint16_t nbytes) {
+        Notify(PSTR("\r\nHCI Command: "), 0x80);
+        for(uint8_t i = 0; i < nbytes; i++) {
+                D_PrintHex<uint8_t > (data[i], 0x80);
+                Notify(PSTR(" "), 0x80);
+        }
         hci_clear_flag(HCI_FLAG_CMD_COMPLETE);
         pUsb->ctrlReq(bAddress, epInfo[ BTD_CONTROL_PIPE ].epAddr, bmREQ_HCI_OUT, 0x00, 0x00, 0x00, 0x00, nbytes, nbytes, data, NULL);
 }
@@ -1104,7 +1149,20 @@ void BTD::hci_pin_code_request_reply() {
         hcibuf[6] = disc_bdaddr[3];
         hcibuf[7] = disc_bdaddr[4];
         hcibuf[8] = disc_bdaddr[5];
-        if(pairWithWii) {
+
+        Notify(PSTR("\n"),0x80);
+        for(int8_t i = 0; i < 6; i++) {
+                D_PrintHex<uint8_t > (my_bdaddr[i], 0x80);
+                Notify(PSTR(":"), 0x80);
+        }
+        Notify(PSTR("\n"),0x80);
+        for(int8_t i = 0; i < 6; i++) {
+                D_PrintHex<uint8_t > (disc_bdaddr[i], 0x80);
+                Notify(PSTR(":"), 0x80);
+        }
+        Notify(PSTR("\n"),0x80);
+
+        if(pairWithWii || pairWithJoyCon) {
                 hcibuf[9] = 6; // Pin length is the length of the Bluetooth address
                 if(pairWiiUsingSync) {
 #ifdef DEBUG_USB_HOST
@@ -1127,6 +1185,10 @@ void BTD::hci_pin_code_request_reply() {
                         hcibuf[i + 10] = 0x00; // The rest should be 0
         }
 
+        for(int8_t i = 0; i < 26; i++) {
+                D_PrintHex<uint8_t > (hcibuf[i], 0x80);
+                Notify(PSTR(" "), 0x80);
+        }
         HCI_Command(hcibuf, 26);
 }
 

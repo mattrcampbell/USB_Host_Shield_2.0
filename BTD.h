@@ -479,6 +479,18 @@ public:
         /** True if it's a Wii U Pro Controller. */
         bool wiiUProController;
 
+        /** Call this function to pair with a Joy-Con */
+        void pairWithJoyConFunc() {
+                pairWithWii = true;
+                hci_state = HCI_CHECK_DEVICE_SERVICE;
+        };
+        /** Used to only send the ACL data to the Joy-Con. */
+        bool connectToJoyCon;
+        /** True if a Joy-Con is connecting. */
+        bool incomingJoyCon;
+        /** True when it should pair with a Joy-Con. */
+        bool pairWithJoyCon;
+
         /** Call this function to pair with a HID device */
         void pairWithHID() {
                 waitingForConnection = false;

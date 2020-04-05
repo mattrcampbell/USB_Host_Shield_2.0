@@ -39,7 +39,7 @@ e-mail   :  support@circuitsathome.com
 ////////////////////////////////////////////////////////////////////////////////
 
 /* Set this to 1 to activate serial debugging */
-#define ENABLE_UHS_DEBUGGING 0
+#define ENABLE_UHS_DEBUGGING 1
 
 /* This can be used to select which serial port to use for debugging if
  * multiple serial ports are available.
@@ -83,7 +83,7 @@ e-mail   :  support@circuitsathome.com
 // Set to 1 to use the faster spi4teensy3 driver.
 ////////////////////////////////////////////////////////////////////////////////
 #ifndef USE_SPI4TEENSY3
-#define USE_SPI4TEENSY3 1
+#define USE_SPI4TEENSY3 0
 #endif
 
 // Disabled on the Teensy LC, as it is incompatible for now
