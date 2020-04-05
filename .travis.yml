@@ -8,6 +8,14 @@ cache:
     directories:
         - "~/.platformio"
 
+addons:
+    apt:
+        packages:
+            # We need GraphViz to draw figures and graphs
+            - graphviz
+            # Doxygen is used for generating the documentation
+            - doxygen
+
 # Generated using: find examples -type f -name "*.ino" | rev | cut -d/ -f2- | rev | sed 's/^/    - PLATFORMIO_CI_SRC=/' > tmp.yml
 env:
     - PLATFORMIO_CI_SRC=examples/acm/acm_terminal
@@ -19,18 +27,21 @@ env:
     - PLATFORMIO_CI_SRC=examples/Bluetooth/BTHID
     - PLATFORMIO_CI_SRC=examples/Bluetooth/PS3BT
     - PLATFORMIO_CI_SRC=examples/Bluetooth/PS3Multi
-    - PLATFORMIO_CI_SRC=examples/Bluetooth/PS3SPP
+    - PLATFORMIO_CI_SRC=examples/Bluetooth/PS3SPP SKIP_UNO=true
     - PLATFORMIO_CI_SRC=examples/Bluetooth/PS4BT
     - PLATFORMIO_CI_SRC=examples/Bluetooth/SPP
     - PLATFORMIO_CI_SRC=examples/Bluetooth/SPPMulti
     - PLATFORMIO_CI_SRC=examples/Bluetooth/Wii
-    - PLATFORMIO_CI_SRC=examples/Bluetooth/WiiBalanceBoard
-    - PLATFORMIO_CI_SRC=examples/Bluetooth/WiiIRCamera PLATFORMIO_BUILD_FLAGS="-DWIICAMERA"
-    - PLATFORMIO_CI_SRC=examples/Bluetooth/WiiMulti
-    - PLATFORMIO_CI_SRC=examples/Bluetooth/WiiUProController
+    - PLATFORMIO_CI_SRC=examples/Bluetooth/WiiBalanceBoard SKIP_UNO=true
+    - PLATFORMIO_CI_SRC=examples/Bluetooth/WiiIRCamera PLATFORMIO_BUILD_FLAGS="-DWIICAMERA" SKIP_UNO=true
+    - PLATFORMIO_CI_SRC=examples/Bluetooth/WiiMulti SKIP_UNO=true
+    - PLATFORMIO_CI_SRC=examples/Bluetooth/WiiUProController SKIP_UNO=true
     - PLATFORMIO_CI_SRC=examples/board_qc
     - PLATFORMIO_CI_SRC=examples/cdc_XR21B1411/XR_terminal
     - PLATFORMIO_CI_SRC=examples/ftdi/USBFTDILoopback
+    - PLATFORMIO_CI_SRC=examples/GPIO/Blink
+    - PLATFORMIO_CI_SRC=examples/GPIO/Blink_LowLevel
+    - PLATFORMIO_CI_SRC=examples/GPIO/Input
     - PLATFORMIO_CI_SRC=examples/HID/le3dp
     - PLATFORMIO_CI_SRC=examples/HID/scale
     - PLATFORMIO_CI_SRC=examples/HID/SRWS1
@@ -74,4 +85,22 @@ install:
     - platformio lib install 62 416 417
 
 script:
-    - platformio ci --lib="." --board=uno --board=due --board=genuino101 --board=teensy30 --board=teensy31 --board=teensy35 --board=teensy36 --board=teensylc --board=esp12e --board=nodemcu --board=esp32dev
+    - if [[ -z "$SKIP_UNO" ]]; then UNO="--board=uno"; fi
+    - platformio ci --lib="." $UNO --board=genuino101 --board=teensy30 --board=teensy31 --board=teensy35 --board=teensy36 --board=teensylc --board=esp12e --board=nodemcu --board=esp32dev
+    - platformio ci --lib="." --board=due --project-option="build_flags=-Wno-misleading-indentation" # Workaround https://travis-ci.org/felis/USB_Host_Shield_2.0/jobs/569237654 and https://github.com/arduino/ArduinoCore-sam/issues/69
+
+before_deploy:
+    # Fix errors in the Doxygen Markdown parser and generate the docs
+    - sed -i 's/Circuits@/Circuits\\@/' README.md
+    - sed -i 's/@YuuichiAkagawa/\\@YuuichiAkagawa/' README.md
+    - doxygen doc/Doxyfile
+    - touch doc/html/.nojekyll
+
+deploy:
+    provider: pages
+    github-token: $GITHUB_TOKEN
+    local_dir: doc/html
+    skip_cleanup: true
+    keep-history: true
+    on:
+        branch: master

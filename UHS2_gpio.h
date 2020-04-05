@@ -20,30 +20,25 @@ Contact information
 Circuits At Home, LTD
 Web      :  http://www.circuitsathome.com
 e-mail   :  support@circuitsathome.com
+
+UHS2_GPIO implements "wiring" style GPIO access. Implemented by Brian Walton brian@riban.co.uk
  */
 
-#if !defined(_usb_h_) || defined(__SINK_PARSER_H__)
-#error "Never include hexdump.h directly; include Usb.h instead"
-#else
-#define __SINK_PARSER_H__
+#if !defined(__USB2_GPIO_H__)
+#define __USB2_GPIO_H__
 
-extern int UsbDEBUGlvl;
+#include "Usb.h"
 
-// This parser does absolutely nothing with the data, just swallows it.
-
-template <class BASE_CLASS, class LEN_TYPE, class OFFSET_TYPE>
-class SinkParser : public BASE_CLASS {
+class UHS2_GPIO {
 public:
+        UHS2_GPIO(USB *pUsb);
 
-        SinkParser() {
-        };
+        void digitalWrite(uint8_t pin, uint8_t val);
+        int digitalRead(uint8_t pin);
+        int digitalReadOutput(uint8_t pin);
 
-        void Initialize() {
-        };
-
-        void Parse(const LEN_TYPE len, const uint8_t *pbuf, const OFFSET_TYPE &offset) {
-        };
+private:
+        USB* m_pUsb;
 };
 
-
-#endif // __HEXDUMP_H__
+#endif // __USB2_GPIO_H__
