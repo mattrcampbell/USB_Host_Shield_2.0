@@ -34,7 +34,7 @@
 #define BELKIN_F8T065BF_PID     0x065A
 
 /* Bluetooth dongle data taken from descriptors */
-#define BULK_MAXPKTSIZE         64 // Max size for ACL data
+#define BULK_MAXPKTSIZE         512 // Max size for ACL data
 
 // Used in control endpoint header for HCI Commands
 #define bmREQ_HCI_OUT USB_SETUP_HOST_TO_DEVICE|USB_SETUP_TYPE_CLASS|USB_SETUP_RECIPIENT_DEVICE
@@ -60,6 +60,9 @@
 #define HCI_DONE_STATE                  15
 #define HCI_DISCONNECT_STATE            16
 
+#define HCI_PAIRING_MODE_STATE          17
+#define HCI_EVENT_MASK_STATE            18
+
 /* HCI event flags*/
 #define HCI_FLAG_CMD_COMPLETE           (1UL << 0)
 #define HCI_FLAG_CONNECT_COMPLETE       (1UL << 1)
@@ -70,6 +73,7 @@
 #define HCI_FLAG_READ_VERSION           (1UL << 6)
 #define HCI_FLAG_DEVICE_FOUND           (1UL << 7)
 #define HCI_FLAG_CONNECT_EVENT          (1UL << 8)
+#define HCI_FLAG_CMD_RECEIVED           (1UL << 9)
 
 /* Macros for HCI event flag tests */
 #define hci_check_flag(flag) (hci_event_flag & (flag))
@@ -93,12 +97,21 @@
 #define EV_LINK_KEY_NOTIFICATION                        0x18
 #define EV_DATA_BUFFER_OVERFLOW                         0x1A
 #define EV_MAX_SLOTS_CHANGE                             0x1B
+#define EV_READ_REMOTE_SUPPORTED_FEATURES               0x0B
 #define EV_READ_REMOTE_VERSION_INFORMATION_COMPLETE     0x0C
 #define EV_QOS_SETUP_COMPLETE                           0x0D
 #define EV_COMMAND_COMPLETE                             0x0E
 #define EV_COMMAND_STATUS                               0x0F
 #define EV_LOOPBACK_COMMAND                             0x19
 #define EV_PAGE_SCAN_REP_MODE                           0x20
+#define EV_READ_REMOTE_EXTENDED_FEATURES_COMPLETE       0X23
+#define EV_IO_CAPABILITY_REQUEST                        0x31
+#define EV_IO_CAPABILITY_RESPONSE                       0x32
+#define EV_USER_CONFIRMATION_REQUEST                    0x33
+#define EV_SIMPLE_PAIRING_COMPLETE                      0x36
+
+
+
 
 /* Bluetooth states for the different Bluetooth drivers */
 #define L2CAP_WAIT                      0
@@ -329,6 +342,9 @@ public:
         void hci_write_scan_enable();
         /** Disable visibility to other Bluetooth devices. */
         void hci_write_scan_disable();
+        /** Read the remote supported features. */
+        void hci_read_remote_supported_features();
+        void hci_read_remote_extended_features();
         /** Read the remote devices name. */
         void hci_remote_name();
         /** Accept the connection with the Bluetooth device. */
@@ -355,6 +371,7 @@ public:
         void hci_authentication_request();
         /** Start a HCI inquiry. */
         void hci_inquiry();
+        void hci_le_set_scan_enable();
         /** Cancel a HCI inquiry. */
         void hci_inquiry_cancel();
         /** Connect to last device communicated with. */
@@ -366,6 +383,12 @@ public:
         void hci_connect(uint8_t *bdaddr);
         /** Used to a set the class of the device. */
         void hci_write_class_of_device();
+        void hci_write_simple_pairing_mode();
+        void hci_write_set_event_mask();
+        void hci_io_capability_request_reply();
+        void hci_user_confirmation_request_reply();
+        void hci_set_connection_encryption();
+        void hci_read_encryption_key_size();
         /**@}*/
 
         /** @name L2CAP Commands */

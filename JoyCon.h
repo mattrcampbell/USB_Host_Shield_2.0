@@ -465,7 +465,7 @@ private:
         void send_subcommand(int command, int subcommand, uint8_t *data, int len);
         void send_command(int command, uint8_t *data, int len);
 
-        void setReportMode(bool continuous, uint8_t mode);
+        void setReportMode( uint8_t mode);
 
         void writeData(uint32_t offset, uint8_t size, uint8_t* data);
         void initExtension1();
@@ -495,7 +495,7 @@ private:
         uint8_t wiiState; // Stores the value in l2capinbuf[12] - (0x01: Battery is nearly empty), (0x02:  An Extension Controller is connected), (0x04: Speaker enabled), (0x08: IR enabled), (0x10: LED1, 0x20: LED2, 0x40: LED3, 0x80: LED4)
         uint8_t batteryLevel;
         uint8_t rumbledata[8] = { 0x00, 0x01, 0x40, 0x40, 0x00, 0x01, 0x40, 0x40 };
-        int packetNum = 0;
+        uint8_t packetNum = 0;
 
 
 #ifdef WIICAMERA
