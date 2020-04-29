@@ -62,6 +62,9 @@
 
 #define HCI_PAIRING_MODE_STATE          17
 #define HCI_EVENT_MASK_STATE            18
+#define HCI_LE_EVENT_MASK_STATE         19
+#define HCI_ADV_PAIRING_STATE           20
+#define HCI_SET_LE_SCAN_PARAMETERS_STATE 21
 
 /* HCI event flags*/
 #define HCI_FLAG_CMD_COMPLETE           (1UL << 0)
@@ -74,6 +77,8 @@
 #define HCI_FLAG_DEVICE_FOUND           (1UL << 7)
 #define HCI_FLAG_CONNECT_EVENT          (1UL << 8)
 #define HCI_FLAG_CMD_RECEIVED           (1UL << 9)
+#define HCI_FLAG_SIMPLE_PAIR_COMPLETE   (1UL << 10)
+#define HCI_FLAG_LINK_KEY_RECEIVED      (1UL << 11)
 
 /* Macros for HCI event flag tests */
 #define hci_check_flag(flag) (hci_event_flag & (flag))
@@ -109,9 +114,7 @@
 #define EV_IO_CAPABILITY_RESPONSE                       0x32
 #define EV_USER_CONFIRMATION_REQUEST                    0x33
 #define EV_SIMPLE_PAIRING_COMPLETE                      0x36
-
-
-
+#define EV_SIMPLE_PAIRING_COMPLETE                      0x36
 
 /* Bluetooth states for the different Bluetooth drivers */
 #define L2CAP_WAIT                      0
@@ -130,14 +133,16 @@
 #define L2CAP_INTERRUPT_DISCONNECT      9
 
 /* Used for SDP channel */
-#define L2CAP_SDP_WAIT                  10
-#define L2CAP_SDP_SUCCESS               11
+#define L2CAP_SDP_CONNECT_REQUEST       10
+#define L2CAP_SDP_CONFIG_REQUEST        11
+#define L2CAP_SDP_WAIT                  12
+#define L2CAP_SDP_SUCCESS               13
 
 /* Used for RFCOMM channel */
-#define L2CAP_RFCOMM_WAIT               12
-#define L2CAP_RFCOMM_SUCCESS            13
+#define L2CAP_RFCOMM_WAIT               14
+#define L2CAP_RFCOMM_SUCCESS            15
 
-#define L2CAP_DISCONNECT_RESPONSE       14 // Used for both SDP and RFCOMM channel
+#define L2CAP_DISCONNECT_RESPONSE       16 // Used for both SDP and RFCOMM channel
 
 /* Bluetooth states used by some drivers */
 #define TURN_ON_LED                     17
@@ -145,6 +150,14 @@
 #define WII_CHECK_MOTION_PLUS_STATE     19
 #define WII_CHECK_EXTENSION_STATE       20
 #define WII_INIT_MOTION_PLUS_STATE      21
+
+#define L2CAP_INFORMATION_REQUEST       22
+#define JOYCON_PAIR_COMMAND             23
+#define JOYCON_PAIR_RESPONSE            24
+#define JOYCON_AQUIRE_LTK               25
+#define JOYCON_SAVE_PAIR                26
+#define JOYCON_RECONNECT                27
+#define JOYCON_RESET_PAIRING            28
 
 /* L2CAP event flags for HID Control channel */
 #define L2CAP_FLAG_CONNECTION_CONTROL_REQUEST           (1UL << 0)
@@ -161,14 +174,16 @@
 /* L2CAP event flags for SDP channel */
 #define L2CAP_FLAG_CONNECTION_SDP_REQUEST               (1UL << 8)
 #define L2CAP_FLAG_CONFIG_SDP_SUCCESS                   (1UL << 9)
-#define L2CAP_FLAG_DISCONNECT_SDP_REQUEST               (1UL << 10)
+#define L2CAP_FLAG_SDP_CONNECTED                        (1UL << 10)
+#define L2CAP_FLAG_DISCONNECT_SDP_REQUEST               (1UL << 11)
 
 /* L2CAP event flags for RFCOMM channel */
-#define L2CAP_FLAG_CONNECTION_RFCOMM_REQUEST            (1UL << 11)
-#define L2CAP_FLAG_CONFIG_RFCOMM_SUCCESS                (1UL << 12)
-#define L2CAP_FLAG_DISCONNECT_RFCOMM_REQUEST            (1UL << 13)
+#define L2CAP_FLAG_CONNECTION_RFCOMM_REQUEST            (1UL << 12)
+#define L2CAP_FLAG_CONFIG_RFCOMM_SUCCESS                (1UL << 13)
+#define L2CAP_FLAG_DISCONNECT_RFCOMM_REQUEST            (1UL << 14)
 
-#define L2CAP_FLAG_DISCONNECT_RESPONSE                  (1UL << 14)
+#define L2CAP_FLAG_DISCONNECT_RESPONSE                  (1UL << 15)
+#define L2CAP_FLAG_INFORMATION_REQUEST_RESPONSE         (1UL << 16)
 
 /* Macros for L2CAP event flag tests */
 #define l2cap_check_flag(flag) (l2cap_event_flag & (flag))
@@ -204,6 +219,11 @@
 #define BTD_NUM_SERVICES    4 // Max number of Bluetooth services - if you need more than 4 simply increase this number
 
 #define PAIR    1
+
+struct linkKeyRec {
+        uint8_t host[8];
+        uint8_t key[16];
+} ;
 
 class BluetoothService;
 
@@ -305,6 +325,8 @@ public:
         /** Disconnects both the L2CAP Channel and the HCI Connection for all Bluetooth services. */
         void disconnect();
 
+        void addLinkKey( uint8_t index, uint8_t host[6], uint8_t key[16]);
+
         /**
          * Register Bluetooth dongle members/services.
          * @param  pService Pointer to BluetoothService class instance.
@@ -338,6 +360,7 @@ public:
          * @param name Desired name.
          */
         void hci_set_local_name(const char* name);
+        void hci_write_le_scan_parameters();
         /** Enable visibility to other Bluetooth devices. */
         void hci_write_scan_enable();
         /** Disable visibility to other Bluetooth devices. */
@@ -367,6 +390,8 @@ public:
          * if the Host does not have a stored Link Key for the connection.
          */
         void hci_link_key_request_negative_reply();
+        void hci_link_key_request_reply();
+        void hci_link_key_request_reply2(uint8_t index);
         /** Used to try to authenticate with the remote device. */
         void hci_authentication_request();
         /** Start a HCI inquiry. */
@@ -383,8 +408,9 @@ public:
         void hci_connect(uint8_t *bdaddr);
         /** Used to a set the class of the device. */
         void hci_write_class_of_device();
-        void hci_write_simple_pairing_mode();
+        void hci_write_simple_pairing_mode(uint8_t mode);
         void hci_write_set_event_mask();
+        void hci_write_set_le_event_mask();
         void hci_io_capability_request_reply();
         void hci_user_confirmation_request_reply();
         void hci_set_connection_encryption();
@@ -401,6 +427,9 @@ public:
          * If argument is omitted then the Standard L2CAP header: Channel ID (0x01) for ACL-U will be used.
          */
         void L2CAP_Command(uint16_t handle, uint8_t* data, uint8_t nbytes, uint8_t channelLow = 0x01, uint8_t channelHigh = 0x00);
+
+        void l2cap_information_request(uint16_t handle, uint8_t rxid);
+
         /**
          * L2CAP Connection Request.
          * @param handle HCI handle.
@@ -470,6 +499,10 @@ public:
         const char* btdName;
         /** The pin you wish to make the dongle use for authentication. It is set automatically by the SPP and BTHID library. */
         const char* btdPin;
+        /** Link Key **/
+        uint8_t linkKey[16];
+
+        linkKeyRec linkKeys[5];
 
         /** The bluetooth dongles Bluetooth address. */
         uint8_t my_bdaddr[6];
@@ -641,7 +674,7 @@ protected:
         }
 
         /** Pointer to function called in onInit(). */
-        void (*pFuncOnInit)(void);
+        void (*pFuncOnInit)(void) = NULL;
 
         /** Pointer to BTD instance. */
         BTD *pBtd;

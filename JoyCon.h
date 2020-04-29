@@ -40,23 +40,14 @@ enum HatEnum {
         HatY = 1,
 };
 
-/** Enum used to read the weight on Wii Balance Board. */
-enum BalanceBoardEnum {
-        TopRight = 0,
-        BotRight = 1,
-        TopLeft = 2,
-        BotLeft = 3,
-};
-
 /**
  * This BluetoothService class implements support for the Wiimote including the Nunchuck and Motion Plus extension.
  *
- * It also support the Wii U Pro Controller.
  */
 class JOYCON : public BluetoothService {
 public:
         /**
-         * Constructor for the WII class.
+         * Constructor for the JoyCon class.
          * @param  p   Pointer to BTD class instance.
          * @param  pair   Set this to true in order to pair with the Wiimote. If the argument is omitted then it won't pair with it.
          * One can use ::PAIR to set it to true.
@@ -139,8 +130,8 @@ public:
         void setRumbleOff();
         /** Turn on rumble. */
         void setRumbleOn();
-        /** Toggle rumble. */
-        void setRumbleToggle();
+        /** Rumble mode. */
+        void setRumble(uint8_t mode);
 
         /**
          * Set LED value without using the ::LEDEnum.
@@ -200,8 +191,7 @@ public:
         bool motionPlusConnected;
         /** Variable used to indicate if a Wii U Pro controller is connected. */
         bool wiiUProControllerConnected;
-        /** Variable used to indicate if a Wii Balance Board is connected. */
-        bool wiiBalanceBoardConnected;
+  
         /**@}*/
 
         /* IMU Data, might be usefull if you need to do something more advanced than just calculating the angle */
@@ -272,29 +262,6 @@ public:
         int16_t gyroPitchZero;
         /**@}*/
 
-        /** @name Wii Balance Board functions */
-
-        /**
-         * Used to get the weight at the specific position on the Wii Balance Board.
-         * @param  pos ::BalanceBoardEnum to read from.
-         * @return     Returns the weight in kg.
-         */
-        float getWeight(BalanceBoardEnum pos);
-
-        /**
-         * Used to get total weight on the Wii Balance Board.
-         * @return Returns the weight in kg.
-         */
-        float getTotalWeight();
-
-        /**
-         * Used to get the raw reading at the specific position on the Wii Balance Board.
-         * @param  pos ::BalanceBoardEnum to read from.
-         * @return     Returns the raw reading.
-         */
-        uint16_t getWeightRaw(BalanceBoardEnum pos) {
-                return wiiBalanceBoardRaw[pos];
-        };
         /**@}*/
 
 #ifdef WIICAMERA
@@ -428,6 +395,8 @@ protected:
          * This is useful for instance if you want to set the LEDs in a specific way.
          */
         void onInit();
+        void responseDebug( uint8_t buf[350]);
+
         /**@}*/
 
 private:
@@ -459,6 +428,8 @@ private:
         uint8_t control_dcid[2]; // 0x0060
         uint8_t interrupt_scid[2]; // L2CAP source CID for HID_Interrupt
         uint8_t interrupt_dcid[2]; // 0x0061
+        uint8_t sdp_scid[2];
+        uint8_t sdp_dcid[2];
 
         /* HID Commands */
         void HID_Command(uint8_t* data, uint8_t nbytes);
@@ -473,17 +444,13 @@ private:
 
         void statusRequest(); // Used to update the Wiimote state and battery level
 
-        void readData(uint32_t offset, uint16_t size, bool EEPROM);
+        void readData(uint32_t offset, uint8_t size);
         void readExtensionType();
         void readCalData();
-        void readWiiBalanceBoardCalibration(); // Used by the library to read the Wii Balance Board calibration values
 
         void checkMotionPresent(); // Used to see if a Motion Plus is connected to the Wiimote
         void initMotionPlus();
         void activateMotionPlus();
-
-        uint16_t wiiBalanceBoardRaw[4]; // Wii Balance Board raw values
-        uint16_t wiiBalanceBoardCal[3][4]; // Wii Balance Board calibration values
 
         float compPitch; // Fusioned angle using a complimentary filter if the Motion Plus is connected
         float compRoll; // Fusioned angle using a complimentary filter if the Motion Plus is connected

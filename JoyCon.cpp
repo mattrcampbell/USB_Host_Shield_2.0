@@ -19,8 +19,8 @@
 
 #include "JoyCon.h"
 // To enable serial debugging see "settings.h"
-//#define EXTRADEBUG  // Uncomment to get even more debugging data
-//#define PRINTREPORT // Uncomment to print the report send by the Joy-Con controllers
+#define EXTRADEBUG  // Uncomment to get even more debugging data
+#define PRINTREPORT // Uncomment to print the report send by the Joy-Con controllers
 
 const uint8_t JOYCON_LEDS[] PROGMEM = {
     0x00, // OFF
@@ -77,13 +77,16 @@ JOYCON::JOYCON(BTD *p, bool pair) : BluetoothService(p) // Pointer to USB class 
         pBtd->btdName = "Nintendo Switch";
         pBtd->pairWithJoyCon = pair;
 
-        HIDBuffer[0] = 0xA2; // HID BT DATA_request (0xA0) | Report Type (Output 0x02)
+        //HIDBuffer[0] = 0xA2; // HID BT DATA_request (0xA0) | Report Type (Output 0x02)
 
         /* Set device cid for the control and intterrupt channelse - LSB */
-        control_dcid[0] = 0x60; // 0x0060
+        control_dcid[0] = 0x40; // 0x0040
         control_dcid[1] = 0x00;
-        interrupt_dcid[0] = 0x61; // 0x0061
+        interrupt_dcid[0] = 0x41; // 0x0041
         interrupt_dcid[1] = 0x00;
+        sdp_dcid[0] = 0x42;
+        sdp_dcid[1] = 0x00;
+        ButtonState = 0;
 
         Reset();
 }
@@ -111,10 +114,16 @@ void JOYCON::ACLData(uint8_t *l2capinbuf)
 #ifdef EXTRADEBUG
 
         //Serial.printf("\r\nACLDATA %d %d %d %d\n", pBtd->l2capConnectionClaimed, pBtd->incomingJoyCon, joyconConnected, activeConnection);
-        for (uint8_t i = 0; i < l2capinbuf[0]; i++)
+        Notify(PSTR("\r\n\tL2CAP <- : "), 0x80);
+        for (uint8_t i = 0; i < l2capinbuf[2]+40; i++)
         {
+                //Serial.printf(" %d:",i);
                 D_PrintHex<uint8_t>(l2capinbuf[i], 0x80);
-                Notify(PSTR(" "), 0x80);
+                if( i == 7 ){
+                        Notify(PSTR(" : "), 0x80);
+                } else {
+                        Notify(PSTR(" "), 0x80);
+                }
         }
 #endif
         if (!pBtd->l2capConnectionClaimed && pBtd->incomingJoyCon && !joyconConnected && !activeConnection)
@@ -176,6 +185,14 @@ void JOYCON::ACLData(uint8_t *l2capinbuf)
                                                 interrupt_scid[1] = l2capinbuf[13];
                                                 l2cap_set_flag(L2CAP_FLAG_INTERRUPT_CONNECTED);
                                         }
+                                        else if (l2capinbuf[14] == sdp_dcid[0] && l2capinbuf[15] == sdp_dcid[1])
+                                        {
+                                                Notify(PSTR("\r\nHID SDP Connection Complete"), 0x80);
+                                                identifier = l2capinbuf[9];
+                                                sdp_scid[0] = l2capinbuf[12];
+                                                sdp_scid[1] = l2capinbuf[13];
+                                                l2cap_set_flag(L2CAP_FLAG_SDP_CONNECTED);
+                                        }
                                 }
                         }
                         else if (l2capinbuf[8] == L2CAP_CMD_CONNECTION_REQUEST)
@@ -207,6 +224,13 @@ void JOYCON::ACLData(uint8_t *l2capinbuf)
                                         interrupt_scid[0] = l2capinbuf[14];
                                         interrupt_scid[1] = l2capinbuf[15];
                                         l2cap_set_flag(L2CAP_FLAG_CONNECTION_INTERRUPT_REQUEST);
+                                }else if ((l2capinbuf[12] | (l2capinbuf[13] << 8)) == SDP_PSM)
+                                {
+                                        Notify(PSTR("\r\nL2CAP SDP PSM "), 0x80);
+                                        identifier = l2capinbuf[9];
+                                        sdp_scid[0] = l2capinbuf[14];
+                                        sdp_scid[1] = l2capinbuf[15];
+                                        l2cap_set_flag(L2CAP_FLAG_CONNECTION_SDP_REQUEST);
                                 }
                         }
                         else if (l2capinbuf[8] == L2CAP_CMD_CONFIG_RESPONSE)
@@ -226,20 +250,35 @@ void JOYCON::ACLData(uint8_t *l2capinbuf)
                                                 D_PrintHex<uint8_t>(l2capinbuf[9], 0x80);
                                                 identifier = l2capinbuf[9];
                                                 l2cap_set_flag(L2CAP_FLAG_CONFIG_INTERRUPT_SUCCESS);
+                                                //l2cap_set_flag(L2CAP_FLAG_CONFIG_SDP_SUCCESS);
+
                                         }
+                                        else if (l2capinbuf[12] == sdp_dcid[0] && l2capinbuf[13] == sdp_dcid[1])
+                                        {
+                                                Notify(PSTR("\r\nHID SDP Configuration Complete "), 0x80);
+                                                D_PrintHex<uint8_t>(l2capinbuf[9], 0x80);
+                                                identifier = l2capinbuf[9];
+                                                l2cap_set_flag(L2CAP_FLAG_CONFIG_SDP_SUCCESS);
+                                        }
+                                
                                 }
                         }
                         else if (l2capinbuf[8] == L2CAP_CMD_CONFIG_REQUEST)
                         {
                                 if (l2capinbuf[12] == control_dcid[0] && l2capinbuf[13] == control_dcid[1])
                                 {
-                                        Notify(PSTR("\r\nHID Control Configuration Request"), 0x80);
+                                        Notify(PSTR("\r\nReceived HID Control Configuration Request"), 0x80);
                                         pBtd->l2cap_config_response(hci_handle, l2capinbuf[9], control_scid);
                                 }
                                 else if (l2capinbuf[12] == interrupt_dcid[0] && l2capinbuf[13] == interrupt_dcid[1])
                                 {
-                                        Notify(PSTR("\r\nHID Interrupt Configuration Request"), 0x80);
+                                        Notify(PSTR("\r\nReceived HID Interrupt Configuration Request"), 0x80);
                                         pBtd->l2cap_config_response(hci_handle, l2capinbuf[9], interrupt_scid);
+                                }
+                                else if (l2capinbuf[12] == sdp_dcid[0] && l2capinbuf[13] == sdp_dcid[1])
+                                {
+                                        Notify(PSTR("\r\nReceived HID SDP Configuration Request"), 0x80);
+                                        pBtd->l2cap_config_response(hci_handle, l2capinbuf[9], sdp_scid);
                                 }
                         }
                         else if (l2capinbuf[8] == L2CAP_CMD_DISCONNECT_REQUEST)
@@ -295,11 +334,38 @@ void JOYCON::ACLData(uint8_t *l2capinbuf)
                         D_PrintHex<uint32_t>(l2capinbuf[9], 0x80);
                         Notify(PSTR("\r\n"), 0x80);
 #endif
-                        if (l2capinbuf[8] == 0xA1)
+                        if (l2capinbuf[8] == 0xA1 && l2capinbuf[9] == 0x21){
+                                responseDebug(l2capinbuf);
+                                // Standard input reports used for subcommand replies.
+                                switch(l2capinbuf[23]){
+                                        case 0x01:
+                                                switch(l2capinbuf[24]){
+                                                case 0x01:
+                                                        Notify(PSTR("Pair Reply!"), 0x80);
+                                                        l2cap_state = JOYCON_AQUIRE_LTK;
+                                                        break;
+                                                case 0x02:
+                                                        Notify(PSTR("Aquire LTK Reply!"), 0x80);
+                                                        l2cap_state = JOYCON_SAVE_PAIR;
+                                                        break;
+                                                case 0x03:
+                                                        Notify(PSTR("Save Pair Reply!!"), 0x80);
+                                                        l2cap_state = TURN_ON_LED;
+                                                        break;
+                                                }
+                                                break;
+                                        case 0x07:
+                                                Notify(PSTR("Reset Pairing Reply!!"), 0x80);
+                                                l2cap_state = JOYCON_PAIR_COMMAND;
+                                                break;
+                                }
+                        } else if (l2capinbuf[8] == 0xA1 && l2cap_state == L2CAP_DONE)
                         { // HID_THDR_DATA_INPUT
 
-                                if (l2capinbuf[9] >= 0x30)
-                                {                                                                                                               // These reports include the buttons
+                                switch (l2capinbuf[9])
+                                {
+                                case 0x30: // Standard full mode
+
                                         ButtonState = (uint32_t)(l2capinbuf[12] | l2capinbuf[13] << 8 | l2capinbuf[14] << 16);
 #ifdef PRINTREPORT
                                         Notify(PSTR("ButtonState: "), 0x80);
@@ -311,143 +377,17 @@ void JOYCON::ACLData(uint8_t *l2capinbuf)
                                                 ButtonClickState = ButtonState & ~OldButtonState; // Update click state variable
                                                 OldButtonState = ButtonState;
                                         }
-                                }
-                                if (l2capinbuf[9] == 0x31 || l2capinbuf[9] == 0x33 || l2capinbuf[9] == 0x35 || l2capinbuf[9] == 0x37)
-                                { // Read the accelerometer
-                                        accXwiimote = ((l2capinbuf[12] << 2) | (l2capinbuf[10] & 0x60 >> 5)) - 500;
-                                        accYwiimote = ((l2capinbuf[13] << 2) | (l2capinbuf[11] & 0x20 >> 4)) - 500;
-                                        accZwiimote = ((l2capinbuf[14] << 2) | (l2capinbuf[11] & 0x40 >> 5)) - 500;
-                                }
-                                switch (l2capinbuf[9])
-                                {
-                                case 0x20: // Status Information - (a1) 20 BB BB LF 00 00 VV
-#ifdef EXTRADEBUG
-                                        Notify(PSTR("\r\nStatus report was received"), 0x80);
-#endif
-                                        wiiState = l2capinbuf[12];     // (0x01: Battery is nearly empty), (0x02:  An Extension Controller is connected), (0x04: Speaker enabled), (0x08: IR enabled), (0x10: LED1, 0x20: LED2, 0x40: LED3, 0x80: LED4)
-                                        batteryLevel = l2capinbuf[15]; // Update battery level
-
-                                        if (!checkBatteryLevel)
-                                        { // If this is true it means that the user must have called getBatteryLevel()
-                                                if (l2capinbuf[12] & 0x02)
-                                                { // Check if a extension is connected
-#ifdef DEBUG_USB_HOST
-                                                        if (!unknownExtensionConnected)
-                                                                Notify(PSTR("\r\nExtension connected"), 0x80);
-#endif
-                                                        unknownExtensionConnected = true;
-#ifdef WIICAMERA
-                                                        if (!isIRCameraEnabled()) // Don't activate the Motion Plus if we are trying to initialize the IR camera
-#endif
-                                                                setReportMode(0x35); // Also read the extension
-                                                }
-                                                else
-                                                {
-#ifdef DEBUG_USB_HOST
-                                                        Notify(PSTR("\r\nExtension disconnected"), 0x80);
-#endif
-                                                }
-                                        }
-                                        else
-                                        {
-#ifdef EXTRADEBUG
-                                                Notify(PSTR("\r\nChecking battery level"), 0x80);
-#endif
-                                                checkBatteryLevel = false; // Check for extensions by default
-                                        }
-#ifdef DEBUG_USB_HOST
-                                        if (l2capinbuf[12] & 0x01)
-                                                Notify(PSTR("\r\nWARNING: Battery is nearly empty"), 0x80);
-#endif
-
+                                        setLedStatus();
                                         break;
-                                case 0x21: // Read Memory Data
-                                        if ((l2capinbuf[12] & 0x0F) == 0)
-                                        {                                                         // No error
-                                                uint8_t reportLength = (l2capinbuf[12] >> 4) + 1; // // Bit 4-7 is the length - 1
-                                                                                                  // See: http://wiibrew.org/wiki/Wiimote/Extension_Controllers
-
-#ifdef DEBUG_USB_HOST
-                                                {
-                                                        Notify(PSTR("\r\nUnknown Device: "), 0x80);
-                                                        D_PrintHex<uint8_t>(l2capinbuf[13], 0x80);
-                                                        D_PrintHex<uint8_t>(l2capinbuf[14], 0x80);
-                                                        Notify(PSTR("\r\nData: "), 0x80);
-                                                        for (uint8_t i = 0; i < reportLength; i++)
-                                                        {
-                                                                D_PrintHex<uint8_t>(l2capinbuf[15 + i], 0x80);
-                                                                Notify(PSTR(" "), 0x80);
-                                                        }
-                                                }
-#endif
-                                        }
-#ifdef EXTRADEBUG
-                                        else
-                                        {
-                                                Notify(PSTR("\r\nReport Error: "), 0x80);
-                                                D_PrintHex<uint8_t>(l2capinbuf[13], 0x80);
-                                                D_PrintHex<uint8_t>(l2capinbuf[14], 0x80);
-                                        }
-#endif
+                                case 0x3f:
+                                        setLedStatus();
                                         break;
-                                case 0x22: // Acknowledge output report, return function result
-#ifdef DEBUG_USB_HOST
-                                        if (l2capinbuf[13] != 0x00)
-                                        { // Check if there is an error
-                                                Notify(PSTR("\r\nCommand failed: "), 0x80);
-                                                D_PrintHex<uint8_t>(l2capinbuf[12], 0x80);
-                                        }
-#endif
+                                case 0x31: // NFC/IR MCU mode
                                         break;
-                                case 0x30: // Core buttons - (a1) 30 BB BB
+                                case 0x32: // Unknown
                                         break;
-                                case 0x31: // Core Buttons and Accelerometer - (a1) 31 BB BB AA AA AA
+                                case 0x33: // Unknown
                                         break;
-                                case 0x32:
-                                        break;
-                                case 0x33: // Core Buttons with Accelerometer and 12 IR bytes - (a1) 33 BB BB AA AA AA II II II II II II II II II II II II
-#ifdef WIICAMERA
-                                    // Read the IR data
-                                        IR_object_x1 = (l2capinbuf[15] | ((uint16_t)(l2capinbuf[17] & 0x30) << 4)); // x position
-                                        IR_object_y1 = (l2capinbuf[16] | ((uint16_t)(l2capinbuf[17] & 0xC0) << 2)); // y position
-                                        IR_object_s1 = (l2capinbuf[17] & 0x0F);                                     // Size value, 0-15
-
-                                        IR_object_x2 = (l2capinbuf[18] | ((uint16_t)(l2capinbuf[20] & 0x30) << 4));
-                                        IR_object_y2 = (l2capinbuf[19] | ((uint16_t)(l2capinbuf[20] & 0xC0) << 2));
-                                        IR_object_s2 = (l2capinbuf[20] & 0x0F);
-
-                                        IR_object_x3 = (l2capinbuf[21] | ((uint16_t)(l2capinbuf[23] & 0x30) << 4));
-                                        IR_object_y3 = (l2capinbuf[22] | ((uint16_t)(l2capinbuf[23] & 0xC0) << 2));
-                                        IR_object_s3 = (l2capinbuf[23] & 0x0F);
-
-                                        IR_object_x4 = (l2capinbuf[24] | ((uint16_t)(l2capinbuf[26] & 0x30) << 4));
-                                        IR_object_y4 = (l2capinbuf[25] | ((uint16_t)(l2capinbuf[26] & 0xC0) << 2));
-                                        IR_object_s4 = (l2capinbuf[26] & 0x0F);
-#endif
-                                        break;
-                                case 0x34: // Core Buttons with 19 Extension bytes - (a1) 34 BB BB EE EE EE EE EE EE EE EE EE EE EE EE EE EE EE EE EE EE EE
-                                        break;
-                                        /* 0x3e and 0x3f both give unknown report types when report mode is 0x3e or 0x3f with mode number 0x05 */
-                                case 0x3E: // Core Buttons with Accelerometer and 32 IR bytes
-                                        // (a1) 31 BB BB AA AA AA II II II II II II II II II II II II II II II II II II II II II II II II II II II II II II II II
-                                        // corresponds to output report mode 0x3e
-
-                                        /**** for reading in full mode: DOES NOT WORK YET ****/
-                                        /* When it works it will also have intensity and bounding box data */
-                                        /*
-                                                IR_object_x1 = (l2capinbuf[13] | ((uint16_t)(l2capinbuf[15] & 0x30) << 4));
-                                                IR_object_y1 = (l2capinbuf[14] | ((uint16_t)(l2capinbuf[15] & 0xC0) << 2));
-                                                IR_object_s1 = (l2capinbuf[15] & 0x0F);
-                                                 */
-                                        break;
-                                case 0x3F:
-                                        /*
-                                                IR_object_x1 = (l2capinbuf[13] | ((uint16_t)(l2capinbuf[15] & 0x30) << 4));
-                                                IR_object_y1 = (l2capinbuf[14] | ((uint16_t)(l2capinbuf[15] & 0xC0) << 2));
-                                                IR_object_s1 = (l2capinbuf[15] & 0x0F);
-                                                 */
-                                        break;
-
 #ifdef DEBUG_USB_HOST
                                 default:
                                         Notify(PSTR("\r\nUnknown Report type: "), 0x80);
@@ -490,6 +430,8 @@ void JOYCON::L2CAP_task()
                         pBtd->l2cap_config_request(hci_handle, identifier, interrupt_scid);
 
                         l2cap_state = L2CAP_INTERRUPT_CONFIG_REQUEST;
+                        /* SKIP SDP See also above for FLAG!!!!*/
+                        //l2cap_state = L2CAP_SDP_CONFIG_REQUEST;
                 }
                 break;
 
@@ -527,25 +469,55 @@ void JOYCON::L2CAP_task()
                         identifier++;
                         pBtd->l2cap_config_request(hci_handle, identifier, interrupt_scid);
                         l2cap_state = L2CAP_INTERRUPT_CONFIG_REQUEST;
+
+                        /* SKIP SDP See also above for FLAG!!!!*/
+                        //l2cap_state = L2CAP_SDP_CONFIG_REQUEST;
                 }
                 break;
 
         case L2CAP_INTERRUPT_CONFIG_REQUEST:
                 if (l2cap_check_flag(L2CAP_FLAG_CONFIG_INTERRUPT_SUCCESS))
-                { // Now the HID channels is established
+                { 
 #ifdef DEBUG_USB_HOST
-                        Notify(PSTR("\r\nHID Channels Established"), 0x80);
+                        Notify(PSTR("\r\nSend HID SDP Connection Request"), 0x80);
 #endif
-                        pBtd->connectToJoyCon = false;
-                        pBtd->pairWithJoyCon = false;
-                        stateCounter = 0;
-                        //l2cap_state = WII_CHECK_MOTION_PLUS_STATE;
-                        l2cap_state = TURN_ON_LED;
+                        identifier++;
+                        pBtd->l2cap_connection_request(hci_handle, identifier, sdp_dcid, SDP_PSM);
+                        l2cap_state = L2CAP_SDP_CONNECT_REQUEST;
                 }
                 break;
 
-                /* The next states are in run() */
+        case L2CAP_SDP_CONNECT_REQUEST:
+                if (l2cap_check_flag(L2CAP_FLAG_SDP_CONNECTED))
+                { 
+#ifdef DEBUG_USB_HOST
+                        Notify(PSTR("\r\nSend HID SDP Config Request"), 0x80);
+#endif
+                        identifier++;
+                        pBtd->l2cap_config_request(hci_handle, identifier, sdp_scid);
 
+                        l2cap_state = L2CAP_SDP_CONFIG_REQUEST;
+                }
+                break;
+        case L2CAP_SDP_CONFIG_REQUEST:
+                if (l2cap_check_flag(L2CAP_FLAG_CONFIG_SDP_SUCCESS))
+                { 
+
+#ifdef DEBUG_USB_HOST
+                        Notify(PSTR("\r\nHID Channels Established"), 0x80);
+#endif
+                        if(pBtd->pairWithJoyCon){
+                                //l2cap_state = JOYCON_RESET_PAIRING;
+                                l2cap_state = JOYCON_PAIR_COMMAND;
+                        } else {
+                                l2cap_state = TURN_ON_LED;
+                        }
+                        
+                        
+                }
+                break;
+                /* The next states are in run() */
+        
         case L2CAP_INTERRUPT_DISCONNECT:
                 if (l2cap_check_flag(L2CAP_FLAG_DISCONNECT_INTERRUPT_RESPONSE) && ((int32_t)((uint32_t)millis() - timer) >= 0L))
                 {
@@ -590,7 +562,7 @@ void JOYCON::Run()
 #endif
                         hci_handle = pBtd->hci_handle; // Store the HCI Handle for the connection
                         l2cap_event_flag = 0;          // Reset flags
-                        identifier = 0;
+                        identifier = 1;
                         pBtd->l2cap_connection_request(hci_handle, identifier, control_dcid, HID_CTRL_PSM);
                         l2cap_state = L2CAP_CONTROL_CONNECT_REQUEST;
                 }
@@ -608,78 +580,81 @@ void JOYCON::Run()
                         l2cap_state = L2CAP_CONTROL_SUCCESS;
                 }
                 break;
-
-        case WII_CHECK_EXTENSION_STATE: // This is used to check if there is anything plugged in to the extension port
-#ifdef DEBUG_USB_HOST
-                if (stateCounter == 0) // Only print onnce
-                        Notify(PSTR("\r\nChecking if there is any extension connected"), 0x80);
-#endif
-                stateCounter++; // We use this counter as there has to be a short delay between the commands
-                if (stateCounter == 1)
-                        statusRequest(); // See if a new device has connected
-                if (stateCounter == 100)
-                {
-                        if (unknownExtensionConnected) // Check if there is a extension is connected to the port
-                                initExtension1();
-                        else
-                                stateCounter = 499;
-                }
-                else if (stateCounter == 200)
-                        initExtension2();
-                else if (stateCounter == 300)
-                {
-                        readExtensionType();
-                        unknownExtensionConnected = false;
-                }
-                else if (stateCounter == 400)
-                {
-                        stateCounter = 499;
-                }
-                else if (stateCounter == 500)
-                {
-                        stateCounter = 0;
-                        l2cap_state = TURN_ON_LED;
-                }
+        case JOYCON_RESET_PAIRING:
+        {
+                uint8_t cmd_buf[0x40];
+                bzero(cmd_buf, 0x40);
+                Notify(PSTR("\r\nReset Pairing Information"), 0x80);
+                cmd_buf[0] = 0x00;
+                send_subcommand(0x01, 0x07, cmd_buf, 0);
+                l2cap_state = JOYCON_PAIR_RESPONSE;        
                 break;
+        }
+        case JOYCON_PAIR_COMMAND:
+        {
+                uint8_t cmd_buf[0x40];
+                bzero(cmd_buf, 0x40);
+                Notify(PSTR("\r\nManual Pairing Subcommand "), 0x80);
+                cmd_buf[0] = 0x01;
+                cmd_buf[1] = pBtd->my_bdaddr[0]; // 6 octet bdaddr (LSB)
+                cmd_buf[2] = pBtd->my_bdaddr[1];
+                cmd_buf[3] = pBtd->my_bdaddr[2];
+                cmd_buf[4] = pBtd->my_bdaddr[3];
+                cmd_buf[5] = pBtd->my_bdaddr[4];
+                cmd_buf[6] = pBtd->my_bdaddr[5];
+
+                cmd_buf[1] = pBtd->my_bdaddr[5]; // 6 octet bdaddr (LSB)
+                cmd_buf[2] = pBtd->my_bdaddr[4];
+                cmd_buf[3] = pBtd->my_bdaddr[3];
+                cmd_buf[4] = pBtd->my_bdaddr[2];
+                cmd_buf[5] = pBtd->my_bdaddr[1];
+                cmd_buf[6] = pBtd->my_bdaddr[0];
+                send_subcommand(0x01, 0x01, cmd_buf, 7);
+                l2cap_state = JOYCON_PAIR_RESPONSE;        
+                break;
+        }
+        case JOYCON_AQUIRE_LTK:
+        {
+                uint8_t cmd_buf[0x40];
+                bzero(cmd_buf, 0x40);
+                Notify(PSTR("\r\nManual Pairing Subcommand Aquire LTK"), 0x80);
+                cmd_buf[0] = 0x02;
+                send_subcommand(0x01, 0x01, cmd_buf, 1);
+                l2cap_state = JOYCON_PAIR_RESPONSE;        
+                break;
+        }
+        case JOYCON_SAVE_PAIR:
+        {
+                uint8_t cmd_buf[0x40];
+                bzero(cmd_buf, 0x40);
+                Notify(PSTR("\r\nManual Pairing Subcommand Save Pairing"), 0x80);
+                cmd_buf[0] = 0x03;
+                send_subcommand(0x01, 0x01, cmd_buf, 1);
+                l2cap_state = JOYCON_PAIR_RESPONSE;        
+                break;
+        }
+        case JOYCON_RECONNECT:
+                pBtd->pairWithJoyCon = false;
+                uint8_t cmd_buf[0x40];
+                bzero(cmd_buf, 0x40);
+                Notify(PSTR("\r\nReboot and ReConnect"), 0x80);
+                cmd_buf[0] = 0x03;
+                send_subcommand(0x01, 0x06, cmd_buf, 1);
+                l2cap_state = L2CAP_WAIT;        
+                break;
+                
 
         case TURN_ON_LED:
-
+                pBtd->connectToJoyCon = false;
+                pBtd->pairWithJoyCon = false;
                 joyconConnected = true;
-                onInit();
                 l2cap_state = L2CAP_DONE;
+
+                onInit();
                 break;
 
         case L2CAP_DONE:
-                if (unknownExtensionConnected)
-                {
-#ifdef DEBUG_USB_HOST
-                        if (stateCounter == 0) // Only print once
-                                Notify(PSTR("\r\nChecking extension port"), 0x80);
-#endif
-                        stateCounter++; // We will use this counter as there has to be a short delay between the commands
-                        if (stateCounter == 50)
-                                statusRequest();
-                        else if (stateCounter == 100)
-                                initExtension1();
-                        else if (stateCounter == 150)
-                                stateCounter = 299; // There is no extension connected
-                        else if (stateCounter == 200)
-                                readExtensionType();
-                        else if (stateCounter == 250)
-                        {
-                                //TODO XXXXXXXXXX
-                        }
-                        else if (stateCounter == 400)
-                                readExtensionType(); // Check if it has been activated
-                        else if (stateCounter == 450)
-                        {
-                                onInit();
-                                stateCounter = 0;
-                                unknownExtensionConnected = false;
-                        }
-                }
-                else
-                        stateCounter = 0;
+                stateCounter = 0;
                 break;
         }
 }
@@ -695,8 +670,9 @@ void JOYCON::HID_Command(uint8_t *data, uint8_t nbytes)
         // else
         //         pBtd->L2CAP_Command(hci_handle, data, nbytes, control_scid[0], control_scid[1]);
 
-        pBtd->L2CAP_Command(hci_handle, data, nbytes, control_scid[0], control_scid[1]);
-        //pBtd->L2CAP_Command(hci_handle, data, nbytes, interrupt_scid[0], interrupt_scid[1]);
+        //pBtd->L2CAP_Command(hci_handle, data, nbytes, control_scid[0], control_scid[1]);
+        pBtd->L2CAP_Command(hci_handle, data, nbytes, interrupt_scid[0], interrupt_scid[1]);
+        //pBtd->L2CAP_Command(hci_handle, data, nbytes, sdp_scid[0], sdp_scid[1]);
 
         Notify(PSTR("\r\nHID Command: "), 0x80);
         for (uint8_t i = 0; i < nbytes; i++)
@@ -710,63 +686,67 @@ void JOYCON::HID_Command(uint8_t *data, uint8_t nbytes)
 
 void JOYCON::setAllOff()
 {
-        HIDBuffer[1] = 0x11;
-        HIDBuffer[2] = 0x00;
-        HID_Command(HIDBuffer, 3);
+        // HIDBuffer[1] = 0x11;
+        // HIDBuffer[2] = 0x00;
+        // HID_Command(HIDBuffer, 3);
 }
 
 void JOYCON::setRumbleOff()
 {
-        HIDBuffer[1] = 0x11;
-        HIDBuffer[2] &= ~0x01; // Bit 0 control the rumble
-        HID_Command(HIDBuffer, 3);
+        setRumble(0x00);
 }
 
 void JOYCON::setRumbleOn()
 {
-        HIDBuffer[1] = 0x11;
-        HIDBuffer[2] |= 0x01; // Bit 0 control the rumble
-        HID_Command(HIDBuffer, 3);
+        setRumble(0x01);
 }
-
-void JOYCON::setRumbleToggle()
+void JOYCON::setRumble(uint8_t mode)
 {
-        HIDBuffer[1] = 0x11;
-        HIDBuffer[2] ^= 0x01; // Bit 0 control the rumble
-        HID_Command(HIDBuffer, 3);
+#ifdef EXTRADEBUG
+        Notify(PSTR("\r\nSetting rumble: "), 0x80);
+        D_PrintHex<uint8_t>(mode, 0x80);
+
+#endif
+
+        uint8_t cmd_buf[0x40];
+        bzero(cmd_buf, 0x40);
+
+        // Enable vibration
+        cmd_buf[0] = mode;
+        send_subcommand(0x1, 0x48, cmd_buf, 1);
 }
 
 void JOYCON::setLedRaw(uint8_t value)
 {
-        HIDBuffer[1] = 0x11;
-        HIDBuffer[2] = value | (HIDBuffer[2] & 0x01); // Keep the rumble bit
-        HID_Command(HIDBuffer, 3);
+        // HIDBuffer[1] = 0x11;
+        // HIDBuffer[2] = value | (HIDBuffer[2] & 0x01); // Keep the rumble bit
+        // HID_Command(HIDBuffer, 3);
 }
 
 void JOYCON::setLedOff(LEDEnum a)
 {
-        HIDBuffer[1] = 0x11;
-        HIDBuffer[2] &= ~(pgm_read_byte(&JOYCON_LEDS[(uint8_t)a]));
-        HID_Command(HIDBuffer, 3);
+        // HIDBuffer[1] = 0x11;
+        // HIDBuffer[2] &= ~(pgm_read_byte(&JOYCON_LEDS[(uint8_t)a]));
+        // HID_Command(HIDBuffer, 3);
 }
 
 void JOYCON::setLedOn(LEDEnum a)
 {
-        if (a == OFF)
-                setLedRaw(0);
-        else
-        {
-                HIDBuffer[1] = 0x11;
-                HIDBuffer[2] |= pgm_read_byte(&JOYCON_LEDS[(uint8_t)a]);
-                HID_Command(HIDBuffer, 3);
-        }
+        // if (a == OFF)
+        //         setLedRaw(0);
+        // else
+        // {
+        //         HIDBuffer[1] = 0x11;
+        //         HIDBuffer[2] |= pgm_read_byte(&JOYCON_LEDS[(uint8_t)a]);
+        //         HID_Command(HIDBuffer, 3);
+        // }
 }
 
 void JOYCON::setLedToggle(LEDEnum a)
 {
-        HIDBuffer[1] = 0x11;
-        HIDBuffer[2] ^= pgm_read_byte(&JOYCON_LEDS[(uint8_t)a]);
-        HID_Command(HIDBuffer, 3);
+        // HIDBuffer[1] = 0x11;
+        // HIDBuffer[2] ^= pgm_read_byte(&JOYCON_LEDS[(uint8_t)a]);
+        // HID_Command(HIDBuffer, 3);
 }
 
 void JOYCON::setLedStatus()
@@ -776,23 +756,9 @@ void JOYCON::setLedStatus()
 #endif
         uint8_t cmd_buf[0x40];
         bzero(cmd_buf, 0x40);
-        cmd_buf[0] = 0x01;
+        cmd_buf[0] = 0x03;
         send_subcommand(0x01, 0x30, cmd_buf, 1);
 
-        // uint8_t cmd_buf[0x40];
-        // bzero(cmd_buf, 0x40);
-        // cmd_buf[0] = 0x01;
-        // cmd_buf[1] = 1;
-        // memcpy(cmd_buf + 2, rumbledata, 8);
-        // cmd_buf[10] = 0x30;
-        // cmd_buf[11] = 0x01;
-        // HID_Command(cmd_buf, 0x40);
-        // HIDBuffer[1] = 0x11;
-        // HIDBuffer[2] = (HIDBuffer[2] & 0x01); // Keep the rumble bit
-        // if(joyconConnected)
-        //         HIDBuffer[2] |= 0x10; // If it's connected LED1 will light up
-        //
-        // HID_Command(HIDBuffer, 3);
 }
 
 uint8_t JOYCON::getBatteryLevel()
@@ -807,23 +773,23 @@ void JOYCON::send_command(int command, uint8_t *data, int len)
 {
         unsigned char buf[0x40];
         memset(buf, 0, 0x40);
-        uint8_t bluetooth = 1; //hard code for now
+ 
+        // buf[0] = command;
+        // if (data != nullptr && len != 0)
+        // {
+        //         memcpy(buf + 0x01, data, len);
+        // }
 
-        if (!bluetooth)
-        {
-                buf[0x00] = 0x80;
-                buf[0x01] = 0x92;
-                buf[0x03] = 0x31;
-        }
-
-        buf[bluetooth ? 0x0 : 0x8] = command;
+        buf[0] = 0xA2;
+        buf[1] = command;
         if (data != nullptr && len != 0)
         {
-                memcpy(buf + (bluetooth ? 0x1 : 0x9), data, len);
+                memcpy(buf + 2, data, len);
         }
 
+
         //hid_exchange(this->handle, buf, len + (bluetooth ? 0x1 : 0x9));
-        HID_Command(buf, len + (bluetooth ? 0x1 : 0x9));
+        HID_Command(buf, len + 2);
 
         if (data)
         {
@@ -870,60 +836,25 @@ void JOYCON::setReportMode( uint8_t mode )
         Notify(PSTR("\r\nReport mode was changed to: "), 0x80);
         D_PrintHex<uint8_t>(mode, 0x80);
 #endif
-        // uint8_t cmd_buf[0x40];
-        // bzero(cmd_buf, 0x40);
-        //
-        // cmd_buf[0] = 0x01;
-        // cmd_buf[1] = packetNum & 0xF;
-        // memcpy(cmd_buf + 2, rumbledata, 8);
-        // cmd_buf[10] = 0x03;
-        // cmd_buf[11] = mode;
-        // HID_Command(cmd_buf, 0x40);
         uint8_t cmd_buf[0x40];
         bzero(cmd_buf, 0x40);
 
-        // Enable vibration
-        Serial.printf("\r\nEnabling vibration...");
-        cmd_buf[0] = 0x01; // Enabled
-        send_subcommand(0x1, 0x48, cmd_buf, 1);
-
         // Enable IMU data
-        Serial.printf("\r\nEnabling IMU data...");
-        cmd_buf[0] = 0x01; // Enabled
-        send_subcommand(0x01, 0x40, cmd_buf, 1);
+        // Serial.printf("\r\nEnabling IMU data...");
+        // cmd_buf[0] = 0x01; // Enabled
+        // send_subcommand(0x01, 0x40, cmd_buf, 1);
 
-        // Set input report mode (to push at 60hz)
-        // x00	Active polling mode for IR camera data. Answers with more than 300 bytes ID 31 packet
-        // x01	Active polling mode
-        // x02	Active polling mode for IR camera data.Special IR mode or before configuring it ?
-        // x21	Unknown.An input report with this ID has pairing or mcu data or serial flash data or device info
-        // x23	MCU update input report ?
-        // 30	NPad standard mode. Pushes current state @60Hz. Default in SDK if arg is not in the list
-        // 31	NFC mode. Pushes large packets @60Hz
-        Serial.printf("\r\nSet input report mode to 0x30...");
         cmd_buf[0] = mode;
         send_subcommand(0x01, 0x03, cmd_buf, 1);
-
-        // uint8_t cmd_buf[4];
-        // cmd_buf[0] = 0xA2; // HID BT DATA_request (0xA0) | Report Type (Output 0x02)
-        // // cmd_buf[1] = 0x12;
-        // // if(continuous)
-        // //         cmd_buf[2] = 0x04 | (HIDBuffer[2] & 0x01); // Keep the rumble bit
-        // // else
-        // //         cmd_buf[2] = 0x00 | (HIDBuffer[2] & 0x01); // Keep the rumble bit
-        // // cmd_buf[3] = mode;
-        // cmd_buf[1] = 0x03;
-        // cmd_buf[2] = mode;
-        // HID_Command(cmd_buf, 3);
 }
 
 void JOYCON::statusRequest()
 {
-        uint8_t cmd_buf[3];
-        cmd_buf[0] = 0xA2; // HID BT DATA_request (0xA0) | Report Type (Output 0x02)
-        cmd_buf[1] = 0x15;
-        cmd_buf[2] = (HIDBuffer[2] & 0x01); // Keep the rumble bit
-        HID_Command(cmd_buf, 3);
+        // uint8_t cmd_buf[3];
+        // cmd_buf[0] = 0xA2; // HID BT DATA_request (0xA0) | Report Type (Output 0x02)
+        // cmd_buf[1] = 0x15;
+        // cmd_buf[2] = (HIDBuffer[2] & 0x01); // Keep the rumble bit
+        // HID_Command(cmd_buf, 3);
 }
 
 /************************************************************/
@@ -932,20 +863,20 @@ void JOYCON::statusRequest()
 
 void JOYCON::writeData(uint32_t offset, uint8_t size, uint8_t *data)
 {
-        uint8_t cmd_buf[23];
-        cmd_buf[0] = 0xA2;                         // HID BT DATA_request (0xA0) | Report Type (Output 0x02)
-        cmd_buf[1] = 0x16;                         // Write data
-        cmd_buf[2] = 0x04 | (HIDBuffer[2] & 0x01); // Write to memory, clear bit 2 to write to EEPROM
-        cmd_buf[3] = (uint8_t)((offset & 0xFF0000) >> 16);
-        cmd_buf[4] = (uint8_t)((offset & 0xFF00) >> 8);
-        cmd_buf[5] = (uint8_t)(offset & 0xFF);
-        cmd_buf[6] = size;
-        uint8_t i = 0;
-        for (; i < size; i++)
-                cmd_buf[7 + i] = data[i];
-        for (; i < 16; i++) // Set the rest to zero
-                cmd_buf[7 + i] = 0x00;
-        HID_Command(cmd_buf, 23);
+        // uint8_t cmd_buf[23];
+        // cmd_buf[0] = 0xA2;                         // HID BT DATA_request (0xA0) | Report Type (Output 0x02)
+        // cmd_buf[1] = 0x16;                         // Write data
+        // cmd_buf[2] = 0x04 | (HIDBuffer[2] & 0x01); // Write to memory, clear bit 2 to write to EEPROM
+        // cmd_buf[3] = (uint8_t)((offset & 0xFF0000) >> 16);
+        // cmd_buf[4] = (uint8_t)((offset & 0xFF00) >> 8);
+        // cmd_buf[5] = (uint8_t)(offset & 0xFF);
+        // cmd_buf[6] = size;
+        // uint8_t i = 0;
+        // for (; i < size; i++)
+        //         cmd_buf[7 + i] = data[i];
+        // for (; i < 16; i++) // Set the rest to zero
+        //         cmd_buf[7 + i] = 0x00;
+        // HID_Command(cmd_buf, 23);
 }
 
 void JOYCON::initExtension1()
@@ -962,37 +893,47 @@ void JOYCON::initExtension2()
         writeData(0xA400FB, 1, buf);
 }
 
-void JOYCON::readData(uint32_t offset, uint16_t size, bool EEPROM)
+void JOYCON::readData(uint32_t offset, uint8_t size)
 {
-        uint8_t cmd_buf[8];
-        cmd_buf[0] = 0xA2; // HID BT DATA_request (0xA0) | Report Type (Output 0x02)
-        cmd_buf[1] = 0x17; // Read data
-        if (EEPROM)
-                cmd_buf[2] = 0x00 | (HIDBuffer[2] & 0x01); // Read from EEPROM
-        else
-                cmd_buf[2] = 0x04 | (HIDBuffer[2] & 0x01); // Read from memory
-        cmd_buf[3] = (uint8_t)((offset & 0xFF0000) >> 16);
-        cmd_buf[4] = (uint8_t)((offset & 0xFF00) >> 8);
-        cmd_buf[5] = (uint8_t)(offset & 0xFF);
-        cmd_buf[6] = (uint8_t)((size & 0xFF00) >> 8);
-        cmd_buf[7] = (uint8_t)(size & 0xFF);
+        // uint8_t cmd_buf[8];
+        // cmd_buf[0] = 0xA2; // HID BT DATA_request (0xA0) | Report Type (Output 0x02)
+        // cmd_buf[1] = 0x17; // Read data
+        // if (EEPROM)
+        //         cmd_buf[2] = 0x00 | (HIDBuffer[2] & 0x01); // Read from EEPROM
+        // else
+        //         cmd_buf[2] = 0x04 | (HIDBuffer[2] & 0x01); // Read from memory
+        // cmd_buf[3] = (uint8_t)((offset & 0xFF0000) >> 16);
+        // cmd_buf[4] = (uint8_t)((offset & 0xFF00) >> 8);
+        // cmd_buf[5] = (uint8_t)(offset & 0xFF);
+        // cmd_buf[6] = (uint8_t)((size & 0xFF00) >> 8);
+        // cmd_buf[7] = (uint8_t)(size & 0xFF);
 
-        HID_Command(cmd_buf, 8);
-}
+        // HID_Command(cmd_buf, 8);
 
-void JOYCON::readExtensionType()
-{
-        readData(0xA400FA, 6, false);
+#ifdef EXTRADEBUG
+        Notify(PSTR("\r\nRead data: "), 0x80);
+        D_PrintHex<uint32_t>(offset, 0x80);
+#endif
+        uint8_t cmd_buf[0x40];
+        bzero(cmd_buf, 0x40);
+        cmd_buf[0] = (uint8_t)((offset & 0xFF000000) >> 24);
+        cmd_buf[1] = (uint8_t)((offset & 0xFF0000) >> 16);
+        cmd_buf[2] = (uint8_t)((offset & 0xFF00) >> 8);
+        cmd_buf[3] = (uint8_t)(offset & 0xFF);
+        cmd_buf[4] = size;
+        
+
+        send_subcommand(0x01, 0x10, cmd_buf, 5);
 }
 
 void JOYCON::readCalData()
 {
-        readData(0x0016, 8, true);
+        //readData(0x0016, 8, true);
 }
 
 void JOYCON::checkMotionPresent()
 {
-        readData(0xA600FA, 6, false);
+        //readData(0xA600FA, 6, false);
 }
 
 /************************************************************/
@@ -1039,24 +980,84 @@ uint16_t JOYCON::getAnalogHat(AnalogHatEnum a)
 
 void JOYCON::onInit()
 {
-        uint8_t cmd_buf[0x40];
-        bzero(cmd_buf, 0x40);
+        delay(1);
+        
+        //00:1A:7D:DA:71:11
 
-        // Serial.printf("\r\nPairing subcommand...");
-        // cmd_buf[0] = 0x01;
-        // cmd_buf[1] = 0x01;
-        // cmd_buf[2] = pBtd->my_bdaddr[0]; // 6 octet bdaddr (LSB)
-        // cmd_buf[3] = pBtd->my_bdaddr[1];
-        // cmd_buf[4] = pBtd->my_bdaddr[2];
-        // cmd_buf[5] = pBtd->my_bdaddr[3];
-        // cmd_buf[6] = pBtd->my_bdaddr[4];
-        // cmd_buf[7] = pBtd->my_bdaddr[5];
-        // send_subcommand(0x01, 0x01, cmd_buf, 8);
-
-        //setReportMode(0x30);
-
-        if (pFuncOnInit)
+        setReportMode(0x3F);
+        delay(10);
+        readData(0x00200000,0x1D);
+        //readData(0x26200000,0x1D);
+        Notify(PSTR("\n\rDEBUG A "), 0x80);
+        if (pFuncOnInit){
+                Notify(PSTR("\n\rDEBUG B "), 0x80);
                 pFuncOnInit(); // Call the user function
-        else
+        } else {
                 setLedStatus();
+        }
+        Notify(PSTR("\n\rDEBUG B "), 0x80);
+
+}
+
+void JOYCON::responseDebug( uint8_t buf[350] ){
+
+        Notify(PSTR("BT Handle: "), 0x80);
+        D_PrintHex<uint16_t>(buf[0], 0x80);
+        Notify(PSTR("\r\n"), 0x80);
+
+        Notify(PSTR("BT Data Length: "), 0x80);
+        D_PrintHex<uint16_t>(buf[2], 0x80);
+        Notify(PSTR("\r\n"), 0x80);
+
+        Notify(PSTR("L2CAP Data Length: "), 0x80);
+        D_PrintHex<uint16_t>(buf[4], 0x80);
+        Notify(PSTR("\r\n"), 0x80);
+
+        Notify(PSTR("L2CAP CID: "), 0x80);
+        D_PrintHex<uint16_t>(buf[6], 0x80);
+        Notify(PSTR("\r\n"), 0x80);
+
+        Notify(PSTR("JoyCon Report Type: "), 0x80);
+        D_PrintHex<uint8_t>(buf[9], 0x80);
+        Notify(PSTR(" Timer: "), 0x80);
+        D_PrintHex<uint8_t>(buf[10], 0x80);
+        Notify(PSTR(" Battery: "), 0x80);
+        D_PrintHex<uint8_t>(buf[11], 0x80);
+        Notify(PSTR("\r\n"), 0x80);
+
+        Notify(PSTR("Buttons: Right: "), 0x80);
+        D_PrintHex<uint8_t>(buf[12], 0x80);
+        Notify(PSTR(" Shared: "), 0x80);
+        D_PrintHex<uint8_t>(buf[13], 0x80);
+        Notify(PSTR(" Left: "), 0x80);
+        D_PrintHex<uint8_t>(buf[14], 0x80);
+        Notify(PSTR("\r\n"), 0x80);
+        
+        Notify(PSTR("Sticks: Left: "), 0x80);
+        D_PrintHex<uint8_t>(buf[15], 0x80);
+        Notify(PSTR(", "), 0x80);
+        D_PrintHex<uint8_t>(buf[16], 0x80);
+        Notify(PSTR(", "), 0x80);
+        D_PrintHex<uint8_t>(buf[17], 0x80);
+        Notify(PSTR(" Right: "), 0x80);
+        D_PrintHex<uint8_t>(buf[18], 0x80);
+        Notify(PSTR(", "), 0x80);
+        D_PrintHex<uint8_t>(buf[19], 0x80);
+        Notify(PSTR(", "), 0x80);
+        D_PrintHex<uint8_t>(buf[20], 0x80);
+        Notify(PSTR("\r\n"), 0x80);
+        
+        Notify(PSTR("Rumble: "), 0x80);
+        D_PrintHex<uint8_t>(buf[21], 0x80);
+        Notify(PSTR("\r\n"), 0x80);
+
+        Notify(PSTR("SubCommand: ACK: "), 0x80);
+        D_PrintHex<uint8_t>(buf[22] && 0x80, 0x80);
+        Notify(PSTR(" TYPE: "), 0x80);
+        D_PrintHex<uint8_t>(buf[22] & 0x7F, 0x80);
+        Notify(PSTR(" ID: "), 0x80);
+        D_PrintHex<uint8_t>(buf[23], 0x80);
+        Notify(PSTR("\r\n"), 0x80);
+
+
 }

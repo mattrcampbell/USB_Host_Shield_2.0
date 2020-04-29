@@ -17,7 +17,7 @@
 
 #include "BTD.h"
 // To enable serial debugging see "settings.h"
-//#define EXTRADEBUG // Uncomment to get even more debugging data
+#define EXTRADEBUG // Uncomment to get even more debugging data
 
 const uint8_t BTD::BTD_CONTROL_PIPE = 0;
 const uint8_t BTD::BTD_EVENT_PIPE = 1;
@@ -38,6 +38,8 @@ qNextPollTime(0), // Reset NextPollTime
 pollInterval(0),
 bPollEnable(false) // Don't start polling before dongle is connected
 {
+        
+
         for(uint8_t i = 0; i < BTD_NUM_SERVICES; i++)
                 btService[i] = NULL;
 
@@ -401,6 +403,16 @@ void BTD::disconnect() {
                         btService[i]->disconnect();
 };
 
+void BTD::addLinkKey( uint8_t index, uint8_t host[6], uint8_t key[16]){
+        for(uint8_t i = 0; i < 6; i++){
+                linkKeys[index].host[i] = host[i];
+        }
+        
+        for(uint8_t i = 0; i < 16; i++){
+                linkKeys[index].key[i] = key[i];
+        }
+}
+
 void BTD::HCI_event_task() {
         uint16_t length = BULK_MAXPKTSIZE; // Request more than 16 bytes anyway, the inTransfer routine will take care of this
         uint8_t rcode = pUsb->inTransfer(bAddress, epInfo[ BTD_EVENT_PIPE ].epAddr, &length, hcibuf, pollInterval); // Input on endpoint 1
@@ -412,6 +424,8 @@ void BTD::HCI_event_task() {
                         Notify(PSTR(" "), 0x80);
                 }
         }
+                
+
         if(!rcode || rcode == hrNAK) { // Check for errors
                 switch(hcibuf[0]) { // Switch on event type
                         case EV_COMMAND_COMPLETE:
@@ -480,24 +494,24 @@ void BTD::HCI_event_task() {
 
                         case EV_INQUIRY_RESULT:
                                 if(hcibuf[2]) { // Check that there is more than zero responses
-// #ifdef EXTRADEBUG
-//                                         Notify(PSTR("\r\nNumber of responses: "), 0x80);
-//                                         Notify(hcibuf[2], 0x80);
-// #endif
+#ifdef EXTRADEBUG
+                                        Notify(PSTR("\r\nNumber of responses: "), 0x80);
+                                        Notify(hcibuf[2], 0x80);
+#endif
                                         for(uint8_t i = 0; i < hcibuf[2]; i++) {
                                                 uint8_t offset = 8 * hcibuf[2] + 3 * i;
 
                                                 for(uint8_t j = 0; j < 3; j++)
                                                         classOfDevice[j] = hcibuf[j + 4 + offset];
 
-// #ifdef EXTRADEBUG
-//                                                 Notify(PSTR("\r\nClass of device: "), 0x80);
-//                                                 D_PrintHex<uint8_t > (classOfDevice[2], 0x80);
-//                                                 Notify(PSTR(" "), 0x80);
-//                                                 D_PrintHex<uint8_t > (classOfDevice[1], 0x80);
-//                                                 Notify(PSTR(" "), 0x80);
-//                                                 D_PrintHex<uint8_t > (classOfDevice[0], 0x80);
-// #endif
+ #ifdef EXTRADEBUG
+                                                 Notify(PSTR("\r\nClass of device: "), 0x80);
+                                                 D_PrintHex<uint8_t > (classOfDevice[2], 0x80);
+                                                 Notify(PSTR(" "), 0x80);
+                                                 D_PrintHex<uint8_t > (classOfDevice[1], 0x80);
+                                                 Notify(PSTR(" "), 0x80);
+                                                 D_PrintHex<uint8_t > (classOfDevice[0], 0x80);
+ #endif
 
                                                 if((pairWithWii || pairWithJoyCon) && classOfDevice[2] == 0x00 && (classOfDevice[1] & 0x05) && (classOfDevice[0] & 0x0C)) { // See http://wiibrew.org/wiki/Wiimote#SDP_information
                                                         checkRemoteName = true; // Check remote name to distinguish between the different controllers
@@ -619,12 +633,44 @@ void BTD::HCI_event_task() {
                                 break;
 
                         case EV_LINK_KEY_REQUEST:
+                        {
 #ifdef DEBUG_USB_HOST
                                 Notify(PSTR("\r\nReceived Link Key Request"), 0x80);
 #endif
-                                hci_link_key_request_negative_reply();
-                                break;
+                                if(hci_check_flag(HCI_FLAG_LINK_KEY_RECEIVED)){
+                                        hci_link_key_request_reply();
+                                } else if(!pairWithJoyCon) {
+                                
+                                        bool replied = false;
+                                        for(uint8_t i = 0; i < 2; i ++){
+                                                bool found = true;
+                                                Notify(PSTR("\r\nChecking Key"), 0x80);
+                                                D_PrintHex<uint8_t > (i, 0x80);
 
+                                                for(uint8_t j = 0; j < 6; j++){
+                                                        D_PrintHex<uint8_t > (linkKeys[i].host[j], 0x80);
+                                                        D_PrintHex<uint8_t > (disc_bdaddr[j], 0x80);
+
+                                                        if(linkKeys[i].host[j] != disc_bdaddr[j]){
+                                                                found = false;
+                                                                break;
+                                                        }
+                                                }
+                                                if(found){
+                                                        hci_link_key_request_reply2(i);
+                                                        replied = true;
+                                                        break;
+                                                }
+                                        }
+                                        if(!replied){
+                                        hci_link_key_request_negative_reply(); 
+                                        }
+                                } else {
+                                        hci_link_key_request_negative_reply(); 
+                                }
+                                
+                                break;
+                        }
                         case EV_AUTHENTICATION_COMPLETE:
 #ifdef DEBUG_USB_HOST
                                 Notify(PSTR("\r\nReceived Authentication Complete"), 0x80);
@@ -637,10 +683,18 @@ void BTD::HCI_event_task() {
                                                 connectToWii = true; // Used to indicate to the Wii service, that it should connect to this device
                                         } else if(pairWithJoyCon && !connectToJoyCon) {
 #ifdef DEBUG_USB_HOST
-                                                Notify(PSTR("\r\nPairing successful with Joy-Con"), 0x80);
 #endif
-                                                hci_set_connection_encryption();
-                                                connectToJoyCon = true; // Used to indicate to the Joy-Con service, that it should connect to this device
+                                                if(hci_check_flag(HCI_FLAG_LINK_KEY_RECEIVED) &&
+                                                   hci_check_flag(HCI_FLAG_SIMPLE_PAIR_COMPLETE)){
+                                                        hci_clear_flag(HCI_FLAG_SIMPLE_PAIR_COMPLETE);
+                                                        hci_disconnect(hci_handle);
+                                                        hci_state = HCI_CONNECT_DEVICE_STATE;
+                                                } else {
+                                                        Notify(PSTR("\r\nPairing successful with Joy-Con"), 0x80);
+        
+                                                        hci_set_connection_encryption();
+                                                        //connectToJoyCon = true; // Used to indicate to the Joy-Con service, that it should connect to this device
+                                                }
                                         } else if(pairWithHIDDevice && !connectToHIDDevice) {
 #ifdef DEBUG_USB_HOST
                                                 Notify(PSTR("\r\nPairing successful with HID device"), 0x80);
@@ -658,7 +712,16 @@ void BTD::HCI_event_task() {
                                 break;
                                 /* We will just ignore the following events */
                         case EV_LINK_KEY_NOTIFICATION:
-                                Notify(PSTR("\r\nLink key notification"), 0x80);
+                                if(!hci_check_flag(HCI_FLAG_LINK_KEY_RECEIVED)){
+                                        Notify(PSTR("\r\nLink key notification: "), 0x80);
+
+                                        for( uint8_t i = 0 ; i < 16; i++){
+                                                linkKey[i] = hcibuf[8+i];
+                                                Notify(PSTR(", 0x"), 0x80);
+                                                D_PrintHex<uint8_t > (linkKey[i], 0x80);
+                                        }
+                                        hci_set_flag(HCI_FLAG_LINK_KEY_RECEIVED);
+                                }
                                 break;
                         case EV_IO_CAPABILITY_REQUEST:
                                 Notify(PSTR("\r\nRcvd IO Capability Request"), 0x80);
@@ -673,10 +736,12 @@ void BTD::HCI_event_task() {
                                 break;
                         case EV_SIMPLE_PAIRING_COMPLETE:
                                 //Notify(PSTR("\r\nRcvd Simple Pairing Complete"), 0x80);
+                                hci_set_flag(HCI_FLAG_SIMPLE_PAIR_COMPLETE);
                                 break;
                         case EV_ENCRYPTION_CHANGE:
                                 Notify(PSTR("\r\nRcvd Encryption Change"), 0x80);
                                 hci_read_encryption_key_size();
+                                connectToJoyCon = true; // Used to indicate to the Joy-Con service, that it should connect to this device
                                 break;                                
                         case EV_NUM_COMPLETE_PKT:
                         // case EV_ROLE_CHANGED:
@@ -727,7 +792,11 @@ void BTD::HCI_task() {
                                 Notify(PSTR("\r\nHCI Reset complete"), 0x80);
 #endif
                                 hci_state = HCI_PAIRING_MODE_STATE;
-                                hci_write_simple_pairing_mode();
+                                if(hci_check_flag(HCI_FLAG_LINK_KEY_RECEIVED) || !pairWithJoyCon){
+                                        hci_write_simple_pairing_mode(0x00);
+                                } else if(pairWithJoyCon) {
+                                        hci_write_simple_pairing_mode(0x01);
+                                }
                                 //hci_state = HCI_CLASS_STATE;
                                 //hci_write_class_of_device();
                         } else if(hci_counter > hci_num_reset_loops) {
@@ -746,6 +815,10 @@ void BTD::HCI_task() {
                         hci_write_set_event_mask();
                         break;
                 case HCI_EVENT_MASK_STATE:
+                        hci_state = HCI_LE_EVENT_MASK_STATE;
+                        hci_write_set_le_event_mask();
+                        break;
+                case HCI_LE_EVENT_MASK_STATE:
                         hci_state = HCI_CLASS_STATE;
                         hci_write_class_of_device();
                         break;
@@ -844,7 +917,7 @@ void BTD::HCI_task() {
                         break;
 
                 case HCI_CONNECT_DEVICE_STATE:
-                        if(hci_check_flag(HCI_FLAG_CMD_COMPLETE)) {
+                        if(hci_check_flag(HCI_FLAG_CMD_COMPLETE) || hci_check_flag(HCI_FLAG_DISCONNECT_COMPLETE)) {
 #ifdef DEBUG_USB_HOST
                                 if(pairWithWii)
                                         Notify(PSTR("\r\nConnecting to Wiimote"), 0x80);
@@ -1061,6 +1134,29 @@ void BTD::hci_reset() {
         HCI_Command(hcibuf, 3);
 }
 
+void BTD::hci_write_le_scan_parameters(){
+#ifdef DEBUG_USB_HOST
+        Notify(PSTR("\r\nHCI Write LE Set Scan Parameters"), 0x80);
+#endif
+        // hcibuf[0] = 0x0B;
+        // hcibuf[1] = 0x20;
+        // hcibuf[2] = 0x07;
+        // hcibuf[3] = 0x01;
+        // hcibuf[4] = 0x12;
+        // hcibuf[5] = 0x00;
+        // hcibuf[6] = 0x12;
+        // hcibuf[7] = 0x00;
+        // hcibuf[8] = 0x01;
+        // hcibuf[9] = 0x00;
+        // HCI_Command(hcibuf, 10);
+        hcibuf[0] = 0x6d;
+        hcibuf[1] = 0x0c;
+        hcibuf[2] = 0x02;
+        hcibuf[3] = 0x01;
+        hcibuf[4] = 0x00;
+        HCI_Command(hcibuf, 5);
+}
+
 void BTD::hci_write_scan_enable() {
 #ifdef DEBUG_USB_HOST
         Notify(PSTR("\r\nHCI Write Scan Enable"), 0x80);
@@ -1075,6 +1171,13 @@ void BTD::hci_write_scan_enable() {
                 hcibuf[3] = 0x02; // Inquiry Scan disabled. Page Scan enabled.
 
         HCI_Command(hcibuf, 4);
+
+        // hcibuf[0] = 0x0C;
+        // hcibuf[1] = 0x20;
+        // hcibuf[2] = 0x02;
+        // hcibuf[3] = 0x01;
+        // hcibuf[4] = 0x01;
+        // HCI_Command(hcibuf, 5);
 }
 
 void BTD::hci_write_scan_disable() {
@@ -1252,7 +1355,7 @@ void BTD::hci_pin_code_request_reply() {
         }
         Notify(PSTR("\n"),0x80);
 
-        if(pairWithWii || pairWithJoyCon) {
+        if(pairWithWii) {
                 hcibuf[9] = 6; // Pin length is the length of the Bluetooth address
                 if(pairWiiUsingSync) {
 #ifdef DEBUG_USB_HOST
@@ -1266,6 +1369,20 @@ void BTD::hci_pin_code_request_reply() {
                 }
                 for(uint8_t i = 16; i < 26; i++)
                         hcibuf[i] = 0x00; // The rest should be 0
+//         } else if( pairWithJoyCon) {
+//                 hcibuf[9] = 6; // Pin length is the length of the Bluetooth address
+                
+// #ifdef DEBUG_USB_HOST
+//                 Notify(PSTR("\r\nPairing with JoyCon controller via SYNC"), 0x80);
+// #endif
+//                 // for(uint8_t i = 0; i < 6; i++)
+//                 //         hcibuf[10 + i] = my_bdaddr[i]; // The pin is the Bluetooth dongles Bluetooth address backwards
+        
+//                 for(uint8_t i = 0; i < 6; i++)
+//                         hcibuf[10 + i] = disc_bdaddr[i]; // The pin is the Wiimote's Bluetooth address backwards
+        
+//                 for(uint8_t i = 16; i < 26; i++)
+//                         hcibuf[i] = 0x00; // The rest should be 0
         } else {
                 hcibuf[9] = strlen(btdPin); // Length of pin
                 uint8_t i;
@@ -1275,10 +1392,6 @@ void BTD::hci_pin_code_request_reply() {
                         hcibuf[i + 10] = 0x00; // The rest should be 0
         }
 
-        for(int8_t i = 0; i < 26; i++) {
-                D_PrintHex<uint8_t > (hcibuf[i], 0x80);
-                Notify(PSTR(" "), 0x80);
-        }
         HCI_Command(hcibuf, 26);
 }
 
@@ -1314,6 +1427,48 @@ void BTD::hci_link_key_request_negative_reply() {
         hcibuf[8] = disc_bdaddr[5];
 
         HCI_Command(hcibuf, 9);
+}
+
+void BTD::hci_link_key_request_reply() {
+#ifdef DEBUG_USB_HOST
+        Notify(PSTR("\r\nHCI Link Key Request Reply"), 0x80);
+#endif
+        hcibuf[0] = 0x0B; // HCI OCF = 0B
+        hcibuf[1] = 0x01 << 2; // HCI OGF = 1
+        hcibuf[2] = 0x16; // parameter length 6
+        hcibuf[3] = disc_bdaddr[0]; // 6 octet bdaddr
+        hcibuf[4] = disc_bdaddr[1];
+        hcibuf[5] = disc_bdaddr[2];
+        hcibuf[6] = disc_bdaddr[3];
+        hcibuf[7] = disc_bdaddr[4];
+        hcibuf[8] = disc_bdaddr[5];
+
+        for(uint8_t i = 0; i < 16; i++){
+                hcibuf[9+i] = linkKey[i];
+        }
+
+        HCI_Command(hcibuf, 25);
+}
+
+void BTD::hci_link_key_request_reply2(uint8_t index) {
+#ifdef DEBUG_USB_HOST
+        Notify(PSTR("\r\nHCI Link Key Request Reply 2!"), 0x80);
+#endif
+        hcibuf[0] = 0x0B; // HCI OCF = 0B
+        hcibuf[1] = 0x01 << 2; // HCI OGF = 1
+        hcibuf[2] = 0x16; // parameter length 6
+        hcibuf[3] = disc_bdaddr[0]; // 6 octet bdaddr
+        hcibuf[4] = disc_bdaddr[1];
+        hcibuf[5] = disc_bdaddr[2];
+        hcibuf[6] = disc_bdaddr[3];
+        hcibuf[7] = disc_bdaddr[4];
+        hcibuf[8] = disc_bdaddr[5];
+
+        for(uint8_t i = 0; i < 16; i++){
+                hcibuf[9+i] = linkKeys[index].key[i];
+        }
+
+        HCI_Command(hcibuf, 25);
 }
 
 void BTD::hci_authentication_request() {
@@ -1358,14 +1513,14 @@ void BTD::hci_write_class_of_device() { // See http://bluetooth-pentest.narod.ru
         HCI_Command(hcibuf, 6);
 }
 
-void BTD::hci_write_simple_pairing_mode() { 
+void BTD::hci_write_simple_pairing_mode(uint8_t mode) { 
 #ifdef DEBUG_USB_HOST
         Notify(PSTR("\r\nHCI Write Simple Pairing Mode"), 0x80);
 #endif
         hcibuf[0] = 0x56; // HCI OCF = 24
         hcibuf[1] = 0x03 << 2; // HCI OGF = 3
         hcibuf[2] = 0x01; 
-        hcibuf[3] = 0x01; 
+        hcibuf[3] = mode; 
         
         HCI_Command(hcibuf, 4);
 }
@@ -1385,6 +1540,25 @@ void BTD::hci_write_set_event_mask() {
         hcibuf[8] = 0xF8; 
         hcibuf[9] = 0xBF; 
         hcibuf[10] = 0x3D; 
+        
+        HCI_Command(hcibuf, 11);
+}
+
+void BTD::hci_write_set_le_event_mask() { 
+#ifdef DEBUG_USB_HOST
+        Notify(PSTR("\r\nHCI Write Set LE Event Mask"), 0x80);
+#endif
+        hcibuf[0] = 0x01; // HCI OCF = 1
+        hcibuf[1] = 0x08 << 2;
+        hcibuf[2] = 0x08; // parameter length = 8 
+        hcibuf[3] = 0xFF; 
+        hcibuf[4] = 0x01; 
+        hcibuf[5] = 0x00; 
+        hcibuf[6] = 0x00; 
+        hcibuf[7] = 0x00; 
+        hcibuf[8] = 0x00; 
+        hcibuf[9] = 0x00; 
+        hcibuf[10] = 0x00; 
         
         HCI_Command(hcibuf, 11);
 }
@@ -1493,6 +1667,18 @@ void BTD::L2CAP_Command(uint16_t handle, uint8_t* data, uint8_t nbytes, uint8_t 
         for(uint16_t i = 0; i < nbytes; i++) // L2CAP C-frame
                 buf[8 + i] = data[i];
 
+        Notify(PSTR("\r\n\tL2CAP -> : "), 0x80);
+        for (uint8_t i = 0; i < 8; i++)
+        {
+                D_PrintHex<uint8_t>(buf[i], 0x80);
+                Notify(PSTR(" "), 0x80);
+        }
+        Notify(PSTR(" : "), 0x80);
+        for (uint8_t i = 0; i < nbytes; i++)
+        {
+                D_PrintHex<uint8_t>(data[i], 0x80);
+                Notify(PSTR(" "), 0x80);
+        }
         uint8_t rcode = pUsb->outTransfer(bAddress, epInfo[ BTD_DATAOUT_PIPE ].epAddr, (8 + nbytes), buf);
         if(rcode) {
                 delay(100); // This small delay prevents it from overflowing if it fails
@@ -1505,6 +1691,17 @@ void BTD::L2CAP_Command(uint16_t handle, uint8_t* data, uint8_t nbytes, uint8_t 
                 D_PrintHex<uint8_t > (channelLow, 0x80);
 #endif
         }
+}
+
+void BTD::l2cap_information_request(uint16_t handle, uint8_t rxid) {
+        l2capoutbuf[0] = L2CAP_CMD_INFORMATION_REQUEST; // Code
+        l2capoutbuf[1] = rxid; // Identifier
+        l2capoutbuf[2] = 0x02; // Length
+        l2capoutbuf[3] = 0x00;
+        l2capoutbuf[4] = 0x02;
+        l2capoutbuf[5] = 0x00;
+
+        L2CAP_Command(handle, l2capoutbuf, 8);
 }
 
 void BTD::l2cap_connection_request(uint16_t handle, uint8_t rxid, uint8_t* scid, uint16_t psm) {
